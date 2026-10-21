@@ -87,31 +87,37 @@ install_application() {
 
 install_icons() {
     require_command install
-    require_command gdk-pixbuf-thumbnailer
     require_command file
 
     echo "Imagen de origen: $ICON_SOURCE"
-    echo "Generando e instalando iconos..."
-    for size in 32 48 64 128 256 512; do
-        resized_icon="$TMP_DIR/$APP_ID-$size.png"
-        gdk-pixbuf-thumbnailer -s "$size" "$ICON_SOURCE" "$resized_icon"
-        dimensions="$(file -b "$resized_icon")"
-        if [[ "$dimensions" != *"$size x $size"* ]]; then
-            echo "El icono debe ser cuadrado; el resultado para ${size}px fue: $dimensions" >&2
-            exit 1
-        fi
-        install -Dm644 \
-            "$resized_icon" \
-            "$ICON_ROOT/${size}x${size}/apps/$APP_ID.png"
-    done
 
-    if command -v gtk4-update-icon-cache >/dev/null 2>&1; then
-        gtk4-update-icon-cache -f -t "$ICON_ROOT"
-    elif command -v gtk-update-icon-cache >/dev/null 2>&1; then
-        gtk-update-icon-cache -f -t "$ICON_ROOT"
+    # Determinar si tenemos ImageMagick instalado
+    if command -v magick >/dev/null 2>&1; then
+        RESIZE_CMD="magick"
+    elif command -v convert >/dev/null 2>&1; then
+        RESIZE_CMD="convert"
     else
-        echo "Aviso: no se encontró una herramienta para actualizar la caché de iconos." >&2
+        echo "Aviso: no se encontró ImageMagick (magick o convert). Instalando icono original sin redimensionar."
+        RESIZE_CMD=""
     fi
+
+    if [[ -n "$RESIZE_CMD" ]]; then
+        echo "Generando e instalando iconos..."
+        for size in 32 48 64 128 256 512; do
+            resized_icon="$TMP_DIR/$APP_ID-$size.png"
+            $RESIZE_CMD "$ICON_SOURCE" -resize "${size}x${size}" "$resized_icon"
+
+            install -Dm644 \
+                "$resized_icon" \
+                "$ICON_ROOT/${size}x${size}/apps/$APP_ID.png"
+        done
+    else
+        # Fallback si no hay herramientas de redimensionado: instalar en la carpeta genérica/scalable
+        install -Dm644 "$ICON_SOURCE" "$ICON_ROOT/scalable/apps/$APP_ID.png"
+    fi
+
+    # Forzar actualización en el DE tocando la carpeta (sin depender de gtk-update-icon-cache)
+    touch "$ICON_ROOT" 2>/dev/null || true
 }
 
 mode="${1:---full}"

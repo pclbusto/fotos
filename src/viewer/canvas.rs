@@ -1,7 +1,7 @@
-use crate::message::{EditorMessage, Message};
-use cosmic::iced::mouse;
+use crate::message::{EditorMessage, Message, ViewerMessage};
 use cosmic::iced::widget::canvas::{self, Frame, Geometry, Path as CanvasPath, Program};
 use cosmic::iced::widget::image::Handle;
+use cosmic::iced::{keyboard, mouse};
 use cosmic::iced::{Color, Point, Rectangle, Size};
 
 pub struct ImageCanvasProgram {
@@ -10,6 +10,7 @@ pub struct ImageCanvasProgram {
     pub img_height: f32,
     pub zoom_factor: f32,
     pub is_cropping_mode: bool,
+    pub is_selecting_background: bool,
     pub crop_start: Option<Point>,
     pub crop_end: Option<Point>,
 }
@@ -34,6 +35,7 @@ enum CropDrag {
 pub struct CanvasState {
     pub is_dragging: bool,
     pub drag_start: Option<Point>,
+    modifiers: keyboard::Modifiers,
     crop_drag: CropDrag,
     initial_crop: Option<(Point, Point)>,
     visual_crop: Option<(Point, Point)>,
@@ -83,8 +85,52 @@ impl Program<Message, cosmic::theme::Theme, cosmic::iced::Renderer> for ImageCan
         let canvas_to_image = |p: Point| -> Point { self.canvas_to_image(p, canvas_size) };
 
         match event {
+            canvas::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
+                state.modifiers = *modifiers;
+            }
+            canvas::Event::Mouse(mouse::Event::WheelScrolled { delta })
+                if state.modifiers.control() =>
+            {
+                let y = match delta {
+                    mouse::ScrollDelta::Lines { y, .. } | mouse::ScrollDelta::Pixels { y, .. } => {
+                        *y
+                    }
+                };
+
+                let message = if y > 0.0 {
+                    Some(ViewerMessage::ZoomIn)
+                } else if y < 0.0 {
+                    Some(ViewerMessage::ZoomOut)
+                } else {
+                    None
+                };
+
+                if let Some(message) = message {
+                    return Some(canvas::Action::publish(Message::Viewer(message)).and_capture());
+                }
+            }
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(pos) = cursor.position_in(bounds) {
+                    if self.is_selecting_background {
+                        let rendered_w = self.img_width * self.zoom_factor;
+                        let rendered_h = self.img_height * self.zoom_factor;
+                        let rendered_x = (canvas_size.width - rendered_w) / 2.0;
+                        let rendered_y = (canvas_size.height - rendered_h) / 2.0;
+                        if pos.x >= rendered_x
+                            && pos.x < rendered_x + rendered_w
+                            && pos.y >= rendered_y
+                            && pos.y < rendered_y + rendered_h
+                        {
+                            let image_point = canvas_to_image(pos);
+                            return Some(
+                                canvas::Action::publish(Message::Editor(
+                                    EditorMessage::BackgroundSeedPicked(image_point),
+                                ))
+                                .and_capture(),
+                            );
+                        }
+                        return Some(canvas::Action::capture());
+                    }
                     state.is_dragging = true;
                     state.drag_start = Some(pos);
 
@@ -223,6 +269,19 @@ impl Program<Message, cosmic::theme::Theme, cosmic::iced::Renderer> for ImageCan
             _ => {}
         }
         None
+    }
+
+    fn mouse_interaction(
+        &self,
+        _state: &Self::State,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> mouse::Interaction {
+        if self.is_selecting_background && cursor.is_over(bounds) {
+            mouse::Interaction::Crosshair
+        } else {
+            mouse::Interaction::default()
+        }
     }
 
     fn draw(

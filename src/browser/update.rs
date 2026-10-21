@@ -13,6 +13,7 @@ impl AppModel {
         match message {
             BrowserMessage::FolderSelected(Ok(path)) => {
                 self.browser.current_dir = path.clone();
+                self.save_preferences();
                 if let Some(&id) = self.browser.nav_entities.get(&path) {
                     self.browser.nav_model.activate(id);
                 }
@@ -41,7 +42,28 @@ impl AppModel {
                 self.browser.items = items;
                 self.browser.focused_index = 0;
                 self.browser.directory_generation += 1;
-                self.viewer.cache.clear();
+
+                if self.ui.view_mode == crate::state::ViewMode::Viewer {
+                    let mut viewer_images = Vec::new();
+                    let mut viewer_index = 0;
+                    if let Some(active_path) = &self.viewer.opened_file_path {
+                        for sibling in &self.browser.items {
+                            if let BrowserItem::Image { path: sib_path, .. } = sibling {
+                                if sib_path == active_path {
+                                    viewer_index = viewer_images.len();
+                                }
+                                viewer_images.push(sib_path.clone());
+                            }
+                        }
+                    }
+                    if !viewer_images.is_empty() {
+                        self.viewer.images = viewer_images;
+                        self.viewer.index = viewer_index;
+                    }
+                } else {
+                    self.viewer.cache.clear();
+                }
+
                 let generation = self.browser.directory_generation;
                 Task::batch(
                     self.browser
@@ -91,6 +113,7 @@ impl AppModel {
             }
             BrowserMessage::SetLayout(layout) => {
                 self.browser.layout = layout;
+                self.save_preferences();
                 Task::none()
             }
         }

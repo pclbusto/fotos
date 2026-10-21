@@ -1,6 +1,6 @@
 [package]
 name = "visor_fotos"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -9,6 +9,8 @@ open = "5.3"
 rfd = "0.15"
 image = { version = "0.25", features = ["png", "jpeg", "bmp", "gif", "tiff", "webp"] }
 dirs = "5.0"
+trash = "5.2.6"
+kamadak-exif = "0.6.1"
 
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic.git"

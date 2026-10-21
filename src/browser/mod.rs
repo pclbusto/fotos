@@ -10,6 +10,7 @@ pub enum BrowserItem {
     Image {
         name: String,
         path: PathBuf,
+        file_size: Option<u64>,
         thumbnail: Option<Handle>,
     },
     Folder {

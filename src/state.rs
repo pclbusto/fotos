@@ -7,7 +7,26 @@ use cosmic::widget::about::About;
 use image::DynamicImage;
 
 use crate::browser::BrowserItem;
-use crate::viewer::{CachedImage, ZoomMode};
+use crate::viewer::{CachedImage, ImageMetadata, ZoomMode};
+
+#[derive(Debug, Clone)]
+pub enum EditOperation {
+    Crop(Point, Point),
+    RotateClockwise,
+    RotateCounterclockwise,
+    FlipHorizontal,
+    FlipVertical,
+    Resize {
+        factor: f32,
+        filter: usize,
+    },
+    RemoveBackground {
+        seed: (u32, u32),
+        tolerance: f32,
+        grow: u32,
+        feather: u32,
+    },
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ViewMode {
@@ -37,6 +56,13 @@ pub(crate) enum PendingAction {
     Exit,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct PendingDelete {
+    pub path: PathBuf,
+    pub permanent: bool,
+    pub is_dir: bool,
+}
+
 pub struct BrowserState {
     pub current_dir: PathBuf,
     pub items: Vec<BrowserItem>,
@@ -58,6 +84,7 @@ pub struct ViewerState {
     pub zoom_factor: f32,
     pub zoom_mode: ZoomMode,
     pub opened_file_path: Option<PathBuf>,
+    pub metadata: Option<ImageMetadata>,
 }
 
 pub struct EditorState {
@@ -67,7 +94,16 @@ pub struct EditorState {
     pub scale_percent: f32,
     pub scale_filter: usize,
     pub scale_preview_active: bool,
+    pub selecting_background: bool,
+    pub background_seed: Option<(u32, u32)>,
+    pub background_overlay: Option<Handle>,
+    pub background_selected_pixels: usize,
+    pub background_tolerance: f32,
+    pub background_grow: u32,
+    pub background_feather: u32,
     pub dirty: bool,
+    pub history: Vec<EditOperation>,
+    pub history_revision: u64,
 }
 
 pub struct SettingsState {
@@ -78,9 +114,13 @@ pub struct UiState {
     pub view_mode: ViewMode,
     pub window_width: f32,
     pub window_height: f32,
+    pub is_fullscreen: bool,
+    pub window_id: Option<cosmic::iced::window::Id>,
+    pub viewer_controls_hovered: bool,
     pub error_message: Option<String>,
     pub notification_message: Option<String>,
     pub drawer_mode: Option<DrawerMode>,
     pub about: About,
     pub(crate) pending_action: Option<PendingAction>,
+    pub(crate) pending_delete: Option<PendingDelete>,
 }

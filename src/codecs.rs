@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use image::{DynamicImage, ImageError};
+use image::metadata::Orientation;
+use image::{DynamicImage, ImageDecoder, ImageError, ImageReader};
 
 pub const READ_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff"];
 
@@ -23,7 +24,12 @@ pub fn supports(path: &Path) -> bool {
 }
 
 pub fn open(path: &Path) -> Result<DynamicImage, ImageError> {
-    image::open(path)
+    let reader = ImageReader::open(path)?.with_guessed_format()?;
+    let mut decoder = reader.into_decoder()?;
+    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+    let mut image = DynamicImage::from_decoder(decoder)?;
+    image.apply_orientation(orientation);
+    Ok(image)
 }
 
 pub fn save(image: &DynamicImage, path: &Path) -> Result<(), ImageError> {

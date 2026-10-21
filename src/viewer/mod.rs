@@ -18,3 +18,9 @@ pub struct CachedImage {
     pub width: f32,
     pub height: f32,
 }
+
+#[derive(Debug, Clone, Default)]
+pub struct ImageMetadata {
+    pub file_size: Option<u64>,
+    pub fields: Vec<(String, String)>,
+}

@@ -14,11 +14,11 @@ impl AppModel {
     ) -> Task<cosmic::Action<Message>> {
         match message {
             ViewerMessage::ZoomIn => {
-                self.viewer.zoom_mode = ZoomMode::Custom((self.viewer.zoom_factor + 0.1).min(5.0));
+                self.viewer.zoom_mode = ZoomMode::Custom((self.viewer.zoom_factor + 0.05).min(5.0));
                 self.update_zoom_factor();
             }
             ViewerMessage::ZoomOut => {
-                self.viewer.zoom_mode = ZoomMode::Custom((self.viewer.zoom_factor - 0.1).max(0.1));
+                self.viewer.zoom_mode = ZoomMode::Custom((self.viewer.zoom_factor - 0.05).max(0.1));
                 self.update_zoom_factor();
             }
             ViewerMessage::ZoomActual => {
@@ -49,6 +49,11 @@ impl AppModel {
                     self.ui.error_message = Some(err);
                 }
             }
+            ViewerMessage::MetadataLoaded(path, metadata) => {
+                if self.viewer.opened_file_path.as_ref() == Some(&path) {
+                    self.viewer.metadata = Some(metadata);
+                }
+            }
             ViewerMessage::OpenFile => {
                 if self.editor.dirty {
                     self.ui.pending_action = Some(PendingAction::OpenFileDialog);
@@ -68,14 +73,12 @@ impl AppModel {
                             })
                             .await
                             .unwrap_or_else(|_| {
-                                Err(image::ImageError::IoError(std::io::Error::new(
-                                    std::io::ErrorKind::Other,
+                                Err(image::ImageError::IoError(std::io::Error::other(
                                     "Thread spawn failed",
                                 )))
                             })
                         } else {
-                            Err(image::ImageError::IoError(std::io::Error::new(
-                                std::io::ErrorKind::Other,
+                            Err(image::ImageError::IoError(std::io::Error::other(
                                 "Operación cancelada",
                             )))
                         }
@@ -94,7 +97,11 @@ impl AppModel {
                 self.viewer.image_height = img.height() as f32;
                 self.viewer.image_handle = Some(handle.clone());
                 self.viewer.original_image = Some(img);
+                self.viewer.metadata = None;
+                self.clear_background_selection();
                 self.editor.dirty = false;
+                self.editor.history.clear();
+                self.editor.history_revision = self.editor.history_revision.wrapping_add(1);
                 self.ui.view_mode = ViewMode::Viewer;
                 self.core.nav_bar_set_toggled(false);
 
@@ -126,7 +133,7 @@ impl AppModel {
                 self.update_zoom_factor();
 
                 self.viewer.cache.insert(
-                    path,
+                    path.clone(),
                     CachedImage {
                         handle,
                         width: self.viewer.image_width,
@@ -134,7 +141,7 @@ impl AppModel {
                     },
                 );
 
-                return self.manage_preloads();
+                return Task::batch(vec![self.manage_preloads(), viewer_io::metadata_task(path)]);
             }
             ViewerMessage::FileOpened(Err(err)) => {
                 if err != "Operación cancelada" {
@@ -159,19 +166,49 @@ impl AppModel {
                             })
                             .await
                             .unwrap_or_else(|_| {
-                                Err(image::ImageError::IoError(std::io::Error::new(
-                                    std::io::ErrorKind::Other,
+                                Err(image::ImageError::IoError(std::io::Error::other(
                                     "Thread spawn failed",
                                 )))
                             })
                         },
                         move |res| {
-                            cosmic::Action::App(Message::Viewer(ViewerMessage::ActiveImageLoaded(
+                            cosmic::Action::App(Message::Viewer(ViewerMessage::ImageReset(
                                 res.map_err(|e| e.to_string()),
                             )))
                         },
                     );
                 }
+            }
+            ViewerMessage::ImageReset(Ok((path, image))) => {
+                if self.viewer.opened_file_path.as_ref() == Some(&path) {
+                    let handle = editor::to_handle(&image);
+                    self.viewer.image_width = image.width() as f32;
+                    self.viewer.image_height = image.height() as f32;
+                    self.viewer.image_handle = Some(handle.clone());
+                    self.viewer.original_image = Some(image);
+                    self.viewer.zoom_mode = ZoomMode::FitWindow;
+                    self.editor.crop_start = None;
+                    self.editor.crop_end = None;
+                    self.editor.cropping = false;
+                    self.clear_background_selection();
+                    self.editor.scale_preview_active = false;
+                    self.editor.scale_percent = 100.0;
+                    self.editor.dirty = false;
+                    self.editor.history.clear();
+                    self.editor.history_revision = self.editor.history_revision.wrapping_add(1);
+                    self.viewer.cache.insert(
+                        path,
+                        CachedImage {
+                            handle,
+                            width: self.viewer.image_width,
+                            height: self.viewer.image_height,
+                        },
+                    );
+                    self.update_zoom_factor();
+                }
+            }
+            ViewerMessage::ImageReset(Err(err)) => {
+                self.ui.error_message = Some(format!("No se pudo restablecer la imagen: {err}"));
             }
             ViewerMessage::SaveCopy => {
                 if let Some(ref img) = self.viewer.original_image {
@@ -189,14 +226,12 @@ impl AppModel {
                                 tokio::task::spawn_blocking(move || codecs::save(&img_clone, &path))
                                     .await
                                     .unwrap_or_else(|_| {
-                                        Err(image::ImageError::IoError(std::io::Error::new(
-                                            std::io::ErrorKind::Other,
+                                        Err(image::ImageError::IoError(std::io::Error::other(
                                             "Thread spawn failed",
                                         )))
                                     })
                             } else {
-                                Err(image::ImageError::IoError(std::io::Error::new(
-                                    std::io::ErrorKind::Other,
+                                Err(image::ImageError::IoError(std::io::Error::other(
                                     "Operación cancelada",
                                 )))
                             }
@@ -219,8 +254,7 @@ impl AppModel {
                             tokio::task::spawn_blocking(move || codecs::save(&image, &path))
                                 .await
                                 .unwrap_or_else(|_| {
-                                    Err(image::ImageError::IoError(std::io::Error::new(
-                                        std::io::ErrorKind::Other,
+                                    Err(image::ImageError::IoError(std::io::Error::other(
                                         "Thread spawn failed",
                                     )))
                                 })
@@ -235,6 +269,8 @@ impl AppModel {
             }
             ViewerMessage::FileSaved(Ok(())) => {
                 self.editor.dirty = false;
+                self.editor.history.clear();
+                self.editor.history_revision = self.editor.history_revision.wrapping_add(1);
                 self.ui.notification_message = Some("Imagen guardada".to_string());
                 if self.ui.pending_action.is_some() {
                     return self.continue_pending_action();

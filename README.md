@@ -1,47 +1,81 @@
-# Visor de Fotos COSMIC (libcosmic)
+# Fotos para COSMIC
 
-Este es un visor de fotos moderno, elegante e interactivo hecho en **Rust** utilizando el toolkit **libcosmic** (del entorno de escritorio COSMIC Desktop por System76).
+Fotos es un navegador, visor y editor liviano de imágenes escrito en Rust con
+libcosmic. Está pensado para integrarse con COSMIC Desktop y también puede abrir
+una imagen o carpeta recibida desde la línea de comandos.
 
-## Características
+## Funciones
 
-- 🖼️ **Cargar y visualizar imágenes**: Carga nativa de imágenes estáticas (PNG, JPEG, BMP, WebP y TIFF/TIF) y primer frame de archivos GIF mediante diálogo de archivos integrado.
-- 🔍 **Control de Zoom**:
-  - Acercar (+).
-  - Alejar (-).
-  - Ver a tamaño real (100%).
-- 🖐️ **Modo Navegación (Paneo)**: Arrastra la imagen libremente con el mouse para explorar áreas detalladas cuando esté ampliada.
-- ✂️ **Modo Recorte Interactivo (Crop)**:
-  - Selecciona de forma interactiva la región a recortar arrastrando el mouse sobre la imagen.
-  - Cuenta con una máscara de oscurecimiento (sombras) alrededor del área seleccionada para una excelente experiencia de usuario.
-  - Botón para confirmar el recorte en el visor (`Confirmar Recorte`).
-- 🔄 **Restablecer**: Botón para restaurar la imagen original del archivo en caso de querer descartar los recortes actuales.
-- 💾 **Guardar Copia**: Guarda la imagen resultante (con o sin recortes) como una copia nueva a través de un diálogo nativo de guardado de archivos.
-- 📊 **Barra de Estado**: Muestra el nombre de archivo abierto, dimensiones reales del lienzo y el porcentaje de zoom actual.
+- Navegación de carpetas con vistas de grilla y lista, miniaturas y archivos ocultos opcionales.
+- Visualización de PNG, JPEG, BMP, WebP, TIFF/TIF y el primer cuadro de GIF.
+- Navegación entre las imágenes de una carpeta con botones o flechas del teclado.
+- Zoom ajustado a ventana, ajustado al ancho, tamaño real y zoom manual.
+- Zoom con `Ctrl` + rueda del mouse en pasos de 5 %.
+- Recorte interactivo, rotación, reflejo y escalado con distintos filtros.
+- Historial de transformaciones con varios pasos de deshacer mediante el menú o `Ctrl+Z`.
+- Restablecer una imagen modificada desde su archivo original.
+- Guardar una copia o sobrescribir después de confirmar cambios pendientes.
+- Enviar archivos y carpetas a la papelera con confirmación.
+- Borrado permanente con `Ctrl+Delete` y advertencia explícita.
+- Información EXIF de cámara, captura, exposición, apertura, ISO, distancia focal y orientación.
+- Aplicación automática de la orientación EXIF al visualizar y editar.
+- Preferencias persistentes para vista, archivos ocultos y última carpeta utilizada.
+- Caché persistente de miniaturas y precarga acotada de imágenes vecinas.
+- Menú responsive en el visor, modo de pantalla completa y soporte de `F11`.
 
-## Requisitos Previos
+El historial guarda operaciones livianas y reconstruye la imagen desde el archivo
+original al deshacer, evitando retener una copia completa por cada paso. El
+historial se limpia después de guardar o restablecer.
 
-Dado que `libcosmic` se basa en `iced` y se integra de forma nativa con el sistema operativo, asegúrate de tener las bibliotecas de desarrollo del sistema necesarias (como `libxkbcommon-dev` y `libfontconfig-dev` en distribuciones Debian/Ubuntu):
+## Requisitos
+
+En Debian o Ubuntu se necesitan, como mínimo, las bibliotecas de desarrollo
+utilizadas por libcosmic:
 
 ```bash
 sudo apt install libxkbcommon-dev libfontconfig1-dev
 ```
 
-## Cómo Ejecutar el Proyecto
+También se requiere una instalación reciente de Rust y Cargo.
 
-Para compilar y ejecutar el visor de fotos, simplemente abre una terminal en el directorio del proyecto y ejecuta:
+## Ejecutar
+
+Abrir el navegador en la carpeta de imágenes predeterminada:
 
 ```bash
 cargo run --release
 ```
 
-## Instrucciones de Uso
+Abrir directamente una imagen:
 
-1. Haz clic en **Abrir Imagen** para cargar una foto desde tu disco.
-2. Utiliza los botones de **Acercar**, **Alejar** o **100%** para ajustar el zoom.
-3. **Mover la imagen**: Asegúrate de estar en el modo `Navegar/Mover` (por defecto) y arrastra la imagen con el clic izquierdo del mouse para desplazarla.
-4. **Recortar la imagen**:
-   - Cambia al modo de recorte haciendo clic en el botón de modo (el botón mostrará `Modo: Seleccionar Recorte`).
-   - Haz clic izquierdo y arrastra sobre la imagen para seleccionar el área que deseas recortar (verás el rectángulo blanco con el fondo oscurecido alrededor).
-   - Presiona el botón **Confirmar Recorte** que aparecerá en la barra de herramientas para aplicar el recorte en pantalla.
-   - Si no te gusta el resultado, puedes hacer clic en **Restablecer** para volver a la imagen original.
-5. Haz clic en **Guardar Copia** para guardar el recorte o la imagen actual en el formato que desees (PNG o JPEG).
+```bash
+cargo run --release -- /ruta/a/foto.jpg
+```
+
+Abrir directamente una carpeta:
+
+```bash
+cargo run --release -- /ruta/a/imagenes
+```
+
+## Atajos principales
+
+| Atajo | Acción |
+| --- | --- |
+| `←` / `→` | Imagen anterior o siguiente |
+| `+` / `-` | Acercar o alejar |
+| `0` | Tamaño real (100 %) |
+| `Ctrl` + rueda | Cambiar zoom |
+| `Ctrl+O` | Abrir imagen |
+| `Ctrl+S` | Guardar copia |
+| `Ctrl+Z` | Deshacer última transformación |
+| `Delete` | Mover la selección a la papelera |
+| `Ctrl+Delete` | Eliminar permanentemente |
+| `F11` | Activar o salir de pantalla completa |
+| `Esc` / `Backspace` | Volver al navegador desde el visor |
+
+## Estado del proyecto
+
+Fotos ya cubre el flujo diario de navegación, visualización y transformaciones
+básicas. La primera creación de una miniatura todavía requiere decodificar la
+imagen de origen; las aperturas posteriores reutilizan el caché persistente.

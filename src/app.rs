@@ -12,9 +12,10 @@ use crate::browser::view as browser_view;
 use crate::browser::BrowserItem;
 use crate::editor;
 use crate::message::{BrowserMessage, EditorMessage, Message, UiMessage, ViewerMessage};
+use crate::preferences::Preferences;
 use crate::state::{
-    BrowserState, DrawerMode, EditorState, PendingAction, SettingsState, UiState, ViewMode,
-    ViewerState,
+    BrowserState, DrawerMode, EditOperation, EditorState, PendingAction, SettingsState, UiState,
+    ViewMode, ViewerState,
 };
 use crate::viewer::io as viewer_io;
 use crate::viewer::{CachedImage, ImageCanvasProgram, ZoomMode};
@@ -29,6 +30,16 @@ const SCALE_ALGORITHMS: [&str; 5] = [
     "Lanczos",
 ];
 
+// libcosmic currently sizes a side context drawer between 344 and 480 px while
+// reserving 360 px plus 8 px of padding for the main content. Keep these values
+// together so a toolkit update has a single compatibility point.
+const COSMIC_DRAWER_MIN_WIDTH: f32 = 344.0;
+const COSMIC_DRAWER_MAX_WIDTH: f32 = 480.0;
+const COSMIC_DRAWER_CONTENT_RESERVE: f32 = 368.0;
+const VIEWER_HORIZONTAL_CHROME: f32 = 40.0;
+const VIEWER_VERTICAL_CHROME: f32 = 180.0;
+const BROWSER_GRID_ITEM_WIDTH: f32 = 158.0;
+
 pub struct AppModel {
     pub core: cosmic::Core,
     pub browser: BrowserState,
@@ -39,6 +50,14 @@ pub struct AppModel {
 }
 
 impl AppModel {
+    pub(crate) fn save_preferences(&self) {
+        let _ = Preferences::save(
+            self.browser.layout,
+            self.settings.show_hidden,
+            &self.browser.current_dir,
+        );
+    }
+
     pub(crate) fn set_edited_image(&mut self, image: DynamicImage) {
         let handle = editor::to_handle(&image);
         self.viewer.image_width = image.width() as f32;
@@ -48,6 +67,7 @@ impl AppModel {
         self.editor.crop_start = None;
         self.editor.crop_end = None;
         self.editor.cropping = false;
+        self.clear_background_selection();
         self.editor.scale_preview_active = false;
         self.viewer.zoom_mode = ZoomMode::FitWindow;
         self.update_zoom_factor();
@@ -62,6 +82,12 @@ impl AppModel {
                 },
             );
         }
+    }
+
+    pub(crate) fn apply_edit(&mut self, image: DynamicImage, operation: EditOperation) {
+        self.editor.history.push(operation);
+        self.editor.history_revision = self.editor.history_revision.wrapping_add(1);
+        self.set_edited_image(image);
     }
 
     pub(crate) fn continue_pending_action(&mut self) -> Task<cosmic::Action<Message>> {
@@ -102,9 +128,26 @@ impl AppModel {
         } else {
             0.0
         };
-        let available_w = (self.ui.window_width - sidebar_w - 40.0).max(200.0);
-        let card_w = 160.0;
+        let available_w = (self.ui.window_width - sidebar_w - VIEWER_HORIZONTAL_CHROME).max(200.0);
+        let card_w = BROWSER_GRID_ITEM_WIDTH + 8.0;
         ((available_w / card_w).floor() as usize).max(2)
+    }
+
+    fn viewer_viewport_size(&self) -> (f32, f32) {
+        let drawer_width = if self.core.window.show_context
+            && !self.core.window.context_is_overlay
+            && self.ui.view_mode == ViewMode::Viewer
+        {
+            (self.ui.window_width - COSMIC_DRAWER_CONTENT_RESERVE)
+                .clamp(COSMIC_DRAWER_MIN_WIDTH, COSMIC_DRAWER_MAX_WIDTH)
+        } else {
+            0.0
+        };
+
+        (
+            (self.ui.window_width - drawer_width - VIEWER_HORIZONTAL_CHROME).max(100.0),
+            (self.ui.window_height - VIEWER_VERTICAL_CHROME).max(100.0),
+        )
     }
 
     pub fn update_zoom_factor(&mut self) {
@@ -113,8 +156,7 @@ impl AppModel {
             return;
         }
 
-        let viewport_w = (self.ui.window_width - 40.0).max(100.0);
-        let viewport_h = (self.ui.window_height - 180.0).max(100.0);
+        let (viewport_w, viewport_h) = self.viewer_viewport_size();
 
         match self.viewer.zoom_mode {
             ZoomMode::FitWindow => {
@@ -145,9 +187,7 @@ impl AppModel {
         let mut active_paths = HashSet::new();
         active_paths.insert(self.viewer.images[idx].clone());
         active_paths.insert(self.viewer.images[(idx + 1) % len].clone());
-        active_paths.insert(self.viewer.images[(idx + 2) % len].clone());
         active_paths.insert(self.viewer.images[(idx + len - 1) % len].clone());
-        active_paths.insert(self.viewer.images[(idx + len - 2) % len].clone());
 
         self.viewer
             .cache
@@ -163,15 +203,22 @@ impl AppModel {
         Task::batch(tasks)
     }
 
-    fn set_active_viewer_image(&mut self, path: PathBuf) -> Task<cosmic::Action<Message>> {
+    pub(crate) fn set_active_viewer_image(
+        &mut self,
+        path: PathBuf,
+    ) -> Task<cosmic::Action<Message>> {
         if let Some(index) = self.viewer.images.iter().position(|image| image == &path) {
             self.viewer.index = index;
         }
         self.editor.dirty = false;
         self.viewer.opened_file_path = Some(path.clone());
         self.viewer.original_image = None;
+        self.viewer.metadata = None;
         self.editor.crop_start = None;
         self.editor.crop_end = None;
+        self.clear_background_selection();
+        self.editor.history.clear();
+        self.editor.history_revision = self.editor.history_revision.wrapping_add(1);
 
         let title = path
             .file_name()
@@ -187,14 +234,18 @@ impl AppModel {
             self.ui.error_message = None;
 
             let load_task = viewer_io::load_editable_task(path.clone());
-            Task::batch(vec![self.manage_preloads(), load_task])
+            Task::batch(vec![
+                self.manage_preloads(),
+                load_task,
+                viewer_io::metadata_task(path),
+            ])
         } else {
             self.viewer.image_handle = None;
             self.viewer.image_width = 0.0;
             self.viewer.image_height = 0.0;
             self.ui.error_message = None;
 
-            self.manage_preloads()
+            Task::batch(vec![self.manage_preloads(), viewer_io::metadata_task(path)])
         }
     }
 
@@ -252,12 +303,14 @@ impl AppModel {
                 .size(13),
             );
 
-            if let Ok(metadata) = std::fs::metadata(path) {
-                let size_bytes = metadata.len();
+            if let Some(metadata) = &self.viewer.metadata {
+                let size_bytes = metadata.file_size.unwrap_or(0);
                 let size_str = if size_bytes > 1024 * 1024 {
                     format!("{:.2} MB", size_bytes as f64 / (1024.0 * 1024.0))
-                } else {
+                } else if size_bytes > 0 {
                     format!("{:.2} KB", size_bytes as f64 / 1024.0)
+                } else {
+                    "—".to_string()
                 };
                 col = col.push(cosmic::widget::text("Tamaño de archivo:"));
                 col = col.push(cosmic::widget::text(size_str).size(13));
@@ -266,6 +319,13 @@ impl AppModel {
             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                 col = col.push(cosmic::widget::text("Formato:"));
                 col = col.push(cosmic::widget::text(ext.to_uppercase()).size(13));
+            }
+
+            if let Some(metadata) = &self.viewer.metadata {
+                for (label, value) in &metadata.fields {
+                    col = col.push(cosmic::widget::text(format!("{label}:")));
+                    col = col.push(cosmic::widget::text(value.clone()).size(13));
+                }
             }
         } else {
             col = col.push(cosmic::widget::text("No hay imagen abierta"));
@@ -277,7 +337,7 @@ impl AppModel {
 
 impl cosmic::Application for AppModel {
     type Executor = cosmic::executor::Default;
-    type Flags = ();
+    type Flags = Option<std::path::PathBuf>;
     type Message = Message;
     const APP_ID: &'static str = "com.guten.Fotos";
 
@@ -289,12 +349,29 @@ impl cosmic::Application for AppModel {
         &mut self.core
     }
 
-    fn init(
-        core: cosmic::Core,
-        _flags: Self::Flags,
-    ) -> (Self, Task<cosmic::Action<Self::Message>>) {
-        let initial_dir = browser_io::pictures_dir();
+    fn init(core: cosmic::Core, flags: Self::Flags) -> (Self, Task<cosmic::Action<Self::Message>>) {
+        let preferences = Preferences::load();
+        let mut initial_dir = preferences
+            .last_directory
+            .filter(|path| path.is_dir())
+            .unwrap_or_else(browser_io::pictures_dir);
+        let mut initial_image = None;
+
+        if let Some(path) = flags {
+            if path.is_file() {
+                if let Some(parent) = path.parent() {
+                    initial_dir = parent.to_path_buf();
+                }
+                initial_image = Some(path);
+            } else if path.is_dir() {
+                initial_dir = path;
+            }
+        }
+
         let mut core = core;
+        // Keep context drawers beside the image. The default overlay mode can
+        // cover most of a photo, especially in a narrow window.
+        core.window.context_is_overlay = false;
         core.nav_bar_set_toggled(true);
 
         let mut nav_entities = HashMap::new();
@@ -357,13 +434,13 @@ impl cosmic::Application for AppModel {
             nav_model.activate(id);
         }
 
-        let app = AppModel {
+        let mut app = AppModel {
             core,
             browser: BrowserState {
                 current_dir: initial_dir.clone(),
                 items: Vec::new(),
                 focused_index: 0,
-                layout: BrowserLayout::Grid,
+                layout: preferences.layout,
                 nav_model,
                 nav_entities,
                 directory_generation: 0,
@@ -379,6 +456,7 @@ impl cosmic::Application for AppModel {
                 zoom_factor: 1.0,
                 zoom_mode: ZoomMode::FitWindow,
                 opened_file_path: None,
+                metadata: None,
             },
             editor: EditorState {
                 cropping: false,
@@ -387,13 +465,27 @@ impl cosmic::Application for AppModel {
                 scale_percent: 100.0,
                 scale_filter: 4,
                 scale_preview_active: false,
+                selecting_background: false,
+                background_seed: None,
+                background_overlay: None,
+                background_selected_pixels: 0,
+                background_tolerance: 40.0,
+                background_grow: 0,
+                background_feather: 0,
                 dirty: false,
+                history: Vec::new(),
+                history_revision: 0,
             },
-            settings: SettingsState { show_hidden: false },
+            settings: SettingsState {
+                show_hidden: preferences.show_hidden,
+            },
             ui: UiState {
                 view_mode: ViewMode::Browser,
                 window_width: 900.0,
                 window_height: 650.0,
+                is_fullscreen: false,
+                window_id: None,
+                viewer_controls_hovered: false,
                 error_message: None,
                 notification_message: None,
                 drawer_mode: None,
@@ -408,15 +500,29 @@ impl cosmic::Application for AppModel {
                     .developers([("Pedro", "")])
                     .links([("Repositorio", "https://github.com/guten-project/fotos")]),
                 pending_action: None,
+                pending_delete: None,
             },
         };
 
+        let show_hidden = app.settings.show_hidden;
+        app.save_preferences();
         let startup_task = Task::perform(
-            async move { browser_io::load_directory(initial_dir, false) },
+            async move { browser_io::load_directory(initial_dir, show_hidden) },
             |res| cosmic::Action::App(Message::Browser(BrowserMessage::DirectoryLoaded(res))),
         );
 
-        (app, startup_task)
+        if initial_image.is_some() {
+            app.ui.view_mode = ViewMode::Viewer;
+            app.core.nav_bar_set_toggled(false);
+        }
+
+        let mut tasks = vec![startup_task];
+        if let Some(image_path) = initial_image {
+            app.viewer.images = vec![image_path.clone()];
+            tasks.push(app.set_active_viewer_image(image_path));
+        }
+
+        (app, Task::batch(tasks))
     }
 
     fn subscription(&self) -> cosmic::iced::Subscription<Self::Message> {
@@ -436,7 +542,8 @@ impl cosmic::Application for AppModel {
         })
     }
 
-    fn on_window_resize(&mut self, _id: cosmic::iced::window::Id, width: f32, height: f32) {
+    fn on_window_resize(&mut self, id: cosmic::iced::window::Id, width: f32, height: f32) {
+        self.ui.window_id = Some(id);
         self.ui.window_width = width;
         self.ui.window_height = height;
         self.update_zoom_factor();
@@ -461,168 +568,11 @@ impl cosmic::Application for AppModel {
     }
 
     fn header_start(&self) -> Vec<Element<'_, Self::Message>> {
-        let mut elements = Vec::new();
-        match self.ui.view_mode {
-            ViewMode::Viewer => {
-                elements.push(
-                    cosmic::widget::button::icon(cosmic::widget::icon::from_name(
-                        "go-previous-symbolic",
-                    ))
-                    .icon_size(14)
-                    .width(Length::Fixed(28.0))
-                    .height(Length::Fixed(28.0))
-                    .padding(6)
-                    .class(cosmic::theme::Button::HeaderBar)
-                    .on_press(Message::Browser(BrowserMessage::BackToBrowser))
-                    .tooltip("Volver al navegador")
-                    .into(),
-                );
-            }
-            ViewMode::Browser => {}
-        }
-        elements
+        self.header_start_view()
     }
 
     fn header_end(&self) -> Vec<Element<'_, Self::Message>> {
-        let mut elements = Vec::new();
-        match self.ui.view_mode {
-            ViewMode::Browser => {
-                elements.push(
-                    cosmic::widget::button::icon(cosmic::widget::icon::from_name(
-                        "view-grid-symbolic",
-                    ))
-                    .icon_size(14)
-                    .width(Length::Fixed(28.0))
-                    .height(Length::Fixed(28.0))
-                    .padding(6)
-                    .class(cosmic::theme::Button::HeaderBar)
-                    .selected(self.browser.layout == BrowserLayout::Grid)
-                    .on_press(Message::Browser(BrowserMessage::SetLayout(
-                        BrowserLayout::Grid,
-                    )))
-                    .tooltip("Vista en grilla")
-                    .into(),
-                );
-                elements.push(
-                    cosmic::widget::button::icon(cosmic::widget::icon::from_name(
-                        "view-list-symbolic",
-                    ))
-                    .icon_size(14)
-                    .width(Length::Fixed(28.0))
-                    .height(Length::Fixed(28.0))
-                    .padding(6)
-                    .class(cosmic::theme::Button::HeaderBar)
-                    .selected(self.browser.layout == BrowserLayout::List)
-                    .on_press(Message::Browser(BrowserMessage::SetLayout(
-                        BrowserLayout::List,
-                    )))
-                    .tooltip("Vista en lista")
-                    .into(),
-                );
-                elements.push(
-                    cosmic::widget::button::icon(cosmic::widget::icon::from_name(
-                        "help-about-symbolic",
-                    ))
-                    .icon_size(14)
-                    .width(Length::Fixed(28.0))
-                    .height(Length::Fixed(28.0))
-                    .padding(6)
-                    .class(cosmic::theme::Button::HeaderBar)
-                    .on_press(Message::Ui(UiMessage::ToggleAbout))
-                    .tooltip("Acerca de")
-                    .into(),
-                );
-            }
-            ViewMode::Viewer => {
-                elements.push(
-                    cosmic::widget::button::icon(cosmic::widget::icon::from_name(
-                        "document-open-symbolic",
-                    ))
-                    .icon_size(14)
-                    .width(Length::Fixed(28.0))
-                    .height(Length::Fixed(28.0))
-                    .padding(6)
-                    .class(cosmic::theme::Button::HeaderBar)
-                    .on_press(Message::Viewer(ViewerMessage::OpenFile))
-                    .tooltip("Abrir Imagen")
-                    .into(),
-                );
-
-                let crop_icon = if self.editor.cropping {
-                    "edit-select-symbolic"
-                } else {
-                    "edit-cut-symbolic"
-                };
-
-                elements.push(
-                    cosmic::widget::button::icon(cosmic::widget::icon::from_name(crop_icon))
-                        .icon_size(14)
-                        .width(Length::Fixed(28.0))
-                        .height(Length::Fixed(28.0))
-                        .padding(6)
-                        .class(cosmic::theme::Button::HeaderBar)
-                        .on_press(Message::Editor(EditorMessage::ToggleCropMode))
-                        .tooltip("Recortar imagen")
-                        .into(),
-                );
-
-                elements.push(
-                    cosmic::widget::button::icon(cosmic::widget::icon::from_name(
-                        "document-save-as-symbolic",
-                    ))
-                    .icon_size(14)
-                    .width(Length::Fixed(28.0))
-                    .height(Length::Fixed(28.0))
-                    .padding(6)
-                    .class(cosmic::theme::Button::HeaderBar)
-                    .on_press(Message::Viewer(ViewerMessage::SaveCopy))
-                    .tooltip("Guardar Copia")
-                    .into(),
-                );
-
-                elements.push(
-                    cosmic::widget::button::icon(cosmic::widget::icon::from_name(
-                        "view-fullscreen-symbolic",
-                    ))
-                    .icon_size(14)
-                    .width(Length::Fixed(28.0))
-                    .height(Length::Fixed(28.0))
-                    .padding(6)
-                    .class(cosmic::theme::Button::HeaderBar)
-                    .on_press(Message::Editor(EditorMessage::ToggleTransform))
-                    .tooltip("Transformar imagen")
-                    .into(),
-                );
-
-                elements.push(
-                    cosmic::widget::button::icon(cosmic::widget::icon::from_name(
-                        "help-about-symbolic",
-                    ))
-                    .icon_size(14)
-                    .width(Length::Fixed(28.0))
-                    .height(Length::Fixed(28.0))
-                    .padding(6)
-                    .class(cosmic::theme::Button::HeaderBar)
-                    .on_press(Message::Ui(UiMessage::ToggleAbout))
-                    .tooltip("Acerca de")
-                    .into(),
-                );
-            }
-        }
-        elements.push(
-            cosmic::widget::button::icon(cosmic::widget::icon::from_name(
-                "preferences-system-symbolic",
-            ))
-            .icon_size(14)
-            .width(Length::Fixed(28.0))
-            .height(Length::Fixed(28.0))
-            .padding(6)
-            .class(cosmic::theme::Button::HeaderBar)
-            .on_press(Message::Ui(UiMessage::ToggleSettings))
-            .tooltip("Ajustes")
-            .into(),
-        );
-        elements
+        self.header_end_view()
     }
 
     fn context_drawer(&self) -> Option<ContextDrawer<'_, Self::Message>> {
@@ -698,6 +648,7 @@ impl cosmic::Application for AppModel {
                             )
                             .on_press(Message::Editor(EditorMessage::FlipVertical)),
                     );
+                let has_background_selection = self.editor.background_selected_pixels > 0;
                 let content = cosmic::iced::widget::Column::new()
                     .spacing(cosmic::theme::spacing().space_s)
                     .push(cosmic::widget::text::heading("Rotar"))
@@ -727,10 +678,87 @@ impl cosmic::Application for AppModel {
                                 cosmic::widget::icon::from_name("emblem-ok-symbolic").size(16),
                             )
                             .on_press(Message::Editor(EditorMessage::ApplyScale)),
+                    )
+                    .push(cosmic::widget::text::heading("Eliminar fondo"))
+                    .push(cosmic::widget::text::body(
+                        "Seleccioná una zona continua; el contorno detiene la selección.",
+                    ))
+                    .push(
+                        cosmic::widget::button::standard(if self.editor.selecting_background {
+                            "Hacé clic sobre el fondo…"
+                        } else {
+                            "Seleccionar fondo"
+                        })
+                        .leading_icon(
+                            cosmic::widget::icon::from_name("edit-select-all-symbolic").size(16),
+                        )
+                        .on_press(Message::Editor(EditorMessage::ToggleBackgroundSelection)),
+                    )
+                    .push(cosmic::widget::text::body(format!(
+                        "Tolerancia: {:.0}",
+                        self.editor.background_tolerance,
+                    )))
+                    .push(
+                        cosmic::widget::slider(
+                            0.0..=441.67294,
+                            self.editor.background_tolerance,
+                            |value| {
+                                Message::Editor(EditorMessage::BackgroundToleranceChanged(value))
+                            },
+                        )
+                        .step(1.0)
+                        .width(Length::Fill),
+                    )
+                    .push(cosmic::widget::text::body(format!(
+                        "Agrandar selección: {} px",
+                        self.editor.background_grow,
+                    )))
+                    .push(
+                        cosmic::widget::slider(
+                            0.0..=64.0,
+                            self.editor.background_grow as f32,
+                            |value| Message::Editor(EditorMessage::BackgroundGrowChanged(value)),
+                        )
+                        .step(1.0)
+                        .width(Length::Fill),
+                    )
+                    .push(cosmic::widget::text::body(format!(
+                        "Borde suave: {} px",
+                        self.editor.background_feather,
+                    )))
+                    .push(
+                        cosmic::widget::slider(
+                            0.0..=64.0,
+                            self.editor.background_feather as f32,
+                            |value| Message::Editor(EditorMessage::BackgroundFeatherChanged(value)),
+                        )
+                        .step(1.0)
+                        .width(Length::Fill),
+                    )
+                    .push(cosmic::widget::text::body(if has_background_selection {
+                        format!(
+                            "{} píxeles seleccionados",
+                            self.editor.background_selected_pixels
+                        )
+                    } else {
+                        "Todavía no hay una zona seleccionada".to_string()
+                    }))
+                    .push(
+                        cosmic::widget::button::suggested("Eliminar fondo")
+                            .leading_icon(
+                                cosmic::widget::icon::from_name("edit-clear-symbolic").size(16),
+                            )
+                            .on_press_maybe(
+                                has_background_selection.then_some(Message::Editor(
+                                    EditorMessage::ApplyBackgroundRemoval,
+                                )),
+                            ),
                     );
                 Some(
                     cosmic::app::context_drawer::context_drawer(
-                        content,
+                        cosmic::widget::scrollable(content)
+                            .width(Length::Fill)
+                            .height(Length::Fill),
                         Message::Ui(UiMessage::CloseDrawer),
                     )
                     .title("Transformar"),
@@ -755,26 +783,7 @@ impl cosmic::Application for AppModel {
     }
 
     fn dialog(&self) -> Option<Element<'_, Self::Message>> {
-        self.ui.pending_action.as_ref()?;
-        Some(
-            cosmic::widget::dialog()
-                .title("La imagen tiene cambios sin guardar")
-                .body("Elegí qué hacer con los cambios antes de continuar.")
-                .icon(cosmic::widget::icon::from_name("dialog-warning-symbolic").size(48))
-                .primary_action(
-                    cosmic::widget::button::suggested("Guardar copia")
-                        .on_press(Message::Viewer(ViewerMessage::SaveCopy)),
-                )
-                .secondary_action(
-                    cosmic::widget::button::standard("Sobrescribir")
-                        .on_press(Message::Viewer(ViewerMessage::SaveOverwrite)),
-                )
-                .tertiary_action(
-                    cosmic::widget::button::destructive("Descartar")
-                        .on_press(Message::Ui(UiMessage::DiscardChanges)),
-                )
-                .into(),
-        )
+        self.dialog_view()
     }
 
     fn on_app_exit(&mut self) -> Option<Self::Message> {
@@ -784,150 +793,7 @@ impl cosmic::Application for AppModel {
     }
 
     fn footer(&self) -> Option<Element<'_, Self::Message>> {
-        let spacing = cosmic::theme::spacing();
-
-        if let Some(ref msg) = self.ui.notification_message {
-            return Some(
-                cosmic::widget::container(
-                    cosmic::iced::widget::row![
-                        cosmic::widget::text(msg.clone()),
-                        cosmic::iced::widget::Space::new().width(Length::Fill),
-                        cosmic::widget::button::text("Cerrar")
-                            .on_press(Message::Ui(UiMessage::ClearNotification))
-                    ]
-                    .align_y(Alignment::Center)
-                    .spacing(8),
-                )
-                .padding(8)
-                .class(cosmic::theme::Container::Card)
-                .into(),
-            );
-        }
-
-        if let Some(ref err) = self.ui.error_message {
-            return Some(
-                cosmic::widget::container(
-                    cosmic::iced::widget::row![
-                        cosmic::widget::text(err.clone()),
-                        cosmic::iced::widget::Space::new().width(Length::Fill),
-                        cosmic::widget::button::text("Cerrar")
-                            .on_press(Message::Ui(UiMessage::ClearError))
-                    ]
-                    .align_y(Alignment::Center)
-                    .spacing(8),
-                )
-                .padding(8)
-                .class(cosmic::theme::Container::Card)
-                .into(),
-            );
-        }
-
-        if self.ui.view_mode == ViewMode::Viewer && self.viewer.image_handle.is_some() {
-            let prev_btn = cosmic::widget::button::icon(
-                cosmic::widget::icon::from_name("media-seek-backward-symbolic").size(16),
-            )
-            .on_press(Message::Ui(UiMessage::KeyPress(
-                cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::ArrowLeft),
-                cosmic::iced::keyboard::Modifiers::default(),
-            )))
-            .tooltip("Anterior");
-
-            let next_btn = cosmic::widget::button::icon(
-                cosmic::widget::icon::from_name("media-seek-forward-symbolic").size(16),
-            )
-            .on_press(Message::Ui(UiMessage::KeyPress(
-                cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::ArrowRight),
-                cosmic::iced::keyboard::Modifiers::default(),
-            )))
-            .tooltip("Siguiente");
-
-            let zoom_out = cosmic::widget::button::icon(
-                cosmic::widget::icon::from_name("zoom-out-symbolic").size(16),
-            )
-            .on_press(Message::Viewer(ViewerMessage::ZoomOut))
-            .tooltip("Alejar");
-
-            let zoom_in = cosmic::widget::button::icon(
-                cosmic::widget::icon::from_name("zoom-in-symbolic").size(16),
-            )
-            .on_press(Message::Viewer(ViewerMessage::ZoomIn))
-            .tooltip("Acercar");
-
-            let zoom_fit = cosmic::widget::button::icon(
-                cosmic::widget::icon::from_name("zoom-fit-best-symbolic").size(16),
-            )
-            .on_press(Message::Viewer(ViewerMessage::SetZoomMode(
-                ZoomMode::FitWindow,
-            )))
-            .tooltip("Ajustar a ventana");
-
-            let zoom_width = cosmic::widget::button::icon(
-                cosmic::widget::icon::from_name("zoom-fill-width-symbolic").size(16),
-            )
-            .on_press(Message::Viewer(ViewerMessage::SetZoomMode(
-                ZoomMode::FitWidth,
-            )))
-            .tooltip("Ajustar al ancho");
-
-            let zoom_actual = cosmic::widget::button::icon(
-                cosmic::widget::icon::from_name("zoom-original-symbolic").size(16),
-            )
-            .on_press(Message::Viewer(ViewerMessage::ZoomActual))
-            .tooltip("Tamaño real (100%)");
-
-            let zoom_label =
-                cosmic::widget::text(format!("{}%", (self.viewer.zoom_factor * 100.0) as u32));
-
-            let center_row = cosmic::iced::widget::Row::new()
-                .spacing(spacing.space_s)
-                .align_y(Alignment::Center)
-                .push(prev_btn)
-                .push(zoom_out)
-                .push(zoom_fit)
-                .push(zoom_width)
-                .push(zoom_actual)
-                .push(zoom_label)
-                .push(zoom_in)
-                .push(next_btn);
-
-            let info = format!(
-                "{}x{} px | {}",
-                self.viewer.image_width as u32,
-                self.viewer.image_height as u32,
-                self.viewer
-                    .opened_file_path
-                    .as_ref()
-                    .and_then(|p| p.extension())
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("PNG")
-                    .to_uppercase()
-            );
-            let left_col = cosmic::widget::text(info);
-
-            let info_btn = cosmic::widget::button::icon(
-                cosmic::widget::icon::from_name("dialog-information-symbolic").size(16),
-            )
-            .on_press(Message::Ui(UiMessage::ToggleMetadata))
-            .tooltip("Información detallada");
-
-            Some(
-                cosmic::widget::container(
-                    cosmic::iced::widget::row![
-                        left_col,
-                        cosmic::iced::widget::Space::new().width(Length::Fill),
-                        center_row,
-                        cosmic::iced::widget::Space::new().width(Length::Fill),
-                        info_btn
-                    ]
-                    .align_y(Alignment::Center)
-                    .spacing(16),
-                )
-                .padding(8)
-                .into(),
-            )
-        } else {
-            None
-        }
+        self.footer_view()
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
@@ -938,126 +804,18 @@ impl cosmic::Application for AppModel {
     }
 
     fn update(&mut self, message: Self::Message) -> Task<cosmic::Action<Self::Message>> {
-        let message = match message {
-            Message::Browser(message) => return self.update_browser(message),
-            Message::Editor(message) => return self.update_editor(message),
-            Message::Ui(UiMessage::KeyPress(key, modifiers)) => UiMessage::KeyPress(key, modifiers),
-            Message::Ui(message) => return self.update_dialogs(message),
-            Message::Viewer(message) => return self.update_viewer(message),
-        };
         match message {
-            UiMessage::KeyPress(key, modifiers) => {
-                use cosmic::iced::keyboard::key::Named;
-                use cosmic::iced::keyboard::Key;
-
-                if modifiers.control() {
-                    match &key {
-                        Key::Character(c)
-                            if c.eq_ignore_ascii_case("o")
-                                && self.ui.view_mode == ViewMode::Viewer =>
-                        {
-                            return self.update(Message::Viewer(ViewerMessage::OpenFile));
-                        }
-                        Key::Character(c) if c.eq_ignore_ascii_case("s") => {
-                            if self.ui.view_mode == ViewMode::Viewer
-                                && self.viewer.image_handle.is_some()
-                            {
-                                let task = self.update(Message::Viewer(ViewerMessage::SaveCopy));
-                                return task;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
-                match self.ui.view_mode {
-                    ViewMode::Browser => {
-                        let num_items = self.browser.items.len();
-                        if num_items > 0 {
-                            let cols = self.get_grid_cols();
-                            match key {
-                                Key::Named(Named::ArrowLeft) => {
-                                    if self.browser.focused_index > 0 {
-                                        self.browser.focused_index -= 1;
-                                    }
-                                }
-                                Key::Named(Named::ArrowRight) => {
-                                    if self.browser.focused_index + 1 < num_items {
-                                        self.browser.focused_index += 1;
-                                    }
-                                }
-                                Key::Named(Named::ArrowUp) => {
-                                    if self.browser.focused_index >= cols {
-                                        self.browser.focused_index -= cols;
-                                    }
-                                }
-                                Key::Named(Named::ArrowDown) => {
-                                    if self.browser.focused_index + cols < num_items {
-                                        self.browser.focused_index += cols;
-                                    } else {
-                                        self.browser.focused_index = num_items - 1;
-                                    }
-                                }
-                                Key::Named(Named::Enter) => {
-                                    let idx = self.browser.focused_index;
-                                    return self.handle_item_clicked(idx);
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    ViewMode::Viewer => match key {
-                        Key::Named(Named::ArrowRight) => {
-                            if !self.viewer.images.is_empty() {
-                                let index = (self.viewer.index + 1) % self.viewer.images.len();
-                                let path = self.viewer.images[index].clone();
-                                if self.editor.dirty {
-                                    self.ui.pending_action =
-                                        Some(PendingAction::OpenImage { index, path });
-                                } else {
-                                    return self.set_active_viewer_image(path);
-                                }
-                            }
-                        }
-                        Key::Named(Named::ArrowLeft) => {
-                            if !self.viewer.images.is_empty() {
-                                let index = (self.viewer.index + self.viewer.images.len() - 1)
-                                    % self.viewer.images.len();
-                                let path = self.viewer.images[index].clone();
-                                if self.editor.dirty {
-                                    self.ui.pending_action =
-                                        Some(PendingAction::OpenImage { index, path });
-                                } else {
-                                    return self.set_active_viewer_image(path);
-                                }
-                            }
-                        }
-                        Key::Named(Named::Escape) | Key::Named(Named::Backspace) => {
-                            let task = self.update(Message::Browser(BrowserMessage::BackToBrowser));
-                            return task;
-                        }
-                        Key::Character(ref c) => match c.as_str() {
-                            "+" | "=" => {
-                                let task = self.update(Message::Viewer(ViewerMessage::ZoomIn));
-                                return task;
-                            }
-                            "-" => {
-                                let task = self.update(Message::Viewer(ViewerMessage::ZoomOut));
-                                return task;
-                            }
-                            "0" => {
-                                let task = self.update(Message::Viewer(ViewerMessage::ZoomActual));
-                                return task;
-                            }
-                            _ => {}
-                        },
-                        _ => {}
-                    },
-                }
+            Message::Browser(message) => self.update_browser(message),
+            Message::Editor(message) => self.update_editor(message),
+            Message::Ui(UiMessage::KeyPress(key, modifiers)) => {
+                self.handle_key_press(key, modifiers)
             }
-            _ => unreachable!("only keyboard messages reach application routing"),
+            Message::Ui(message) => self.update_dialogs(message),
+            Message::Viewer(message) => self.update_viewer(message),
+            Message::Surface(action) => {
+                cosmic::task::message(cosmic::Action::Cosmic(cosmic::app::Action::Surface(action)))
+            }
         }
-        Task::none()
     }
 }
 
@@ -1066,8 +824,8 @@ impl AppModel {
     fn view_browser(&self) -> Element<'_, Message> {
         let grid_content = cosmic::iced::widget::responsive(move |size| {
             let spacing = cosmic::theme::spacing();
-            let card_w = 140.0;
-            let total_item_w = card_w + 16.0;
+            let card_w = BROWSER_GRID_ITEM_WIDTH;
+            let total_item_w = card_w + spacing.space_m as f32;
             let cols = ((size.width / total_item_w).floor() as usize).max(2);
 
             let mut grid_col = cosmic::iced::widget::Column::new()
@@ -1119,6 +877,7 @@ impl AppModel {
                         BrowserItem::Image {
                             name,
                             path,
+                            file_size,
                             thumbnail,
                         } => {
                             let preview: Element<'static, Message> = if let Some(handle) = thumbnail
@@ -1141,9 +900,9 @@ impl AppModel {
                                 .and_then(|ext| ext.to_str())
                                 .unwrap_or("Imagen")
                                 .to_uppercase();
-                            let size = std::fs::metadata(path)
-                                .map(|metadata| browser_view::file_size(metadata.len()))
-                                .unwrap_or_else(|_| "—".to_string());
+                            let size = file_size
+                                .map(browser_view::file_size)
+                                .unwrap_or_else(|| "—".to_string());
                             (name.clone(), kind, size, preview)
                         }
                     };
@@ -1235,19 +994,19 @@ impl AppModel {
     fn view_viewer(&self) -> Element<'_, Message> {
         let spacing = cosmic::theme::spacing();
 
-        let main_content: Element<_> = if self.viewer.image_handle.is_some() {
+        let main_content: Element<_> = if let Some(image_handle) = &self.viewer.image_handle {
             let canvas_program = ImageCanvasProgram {
-                image_handle: self.viewer.image_handle.clone(),
+                image_handle: Some(image_handle.clone()),
                 img_width: self.viewer.image_width,
                 img_height: self.viewer.image_height,
                 zoom_factor: self.viewer.zoom_factor,
                 is_cropping_mode: self.editor.cropping,
+                is_selecting_background: self.editor.selecting_background,
                 crop_start: self.editor.crop_start,
                 crop_end: self.editor.crop_end,
             };
 
-            let viewport_w = (self.ui.window_width - 40.0).max(100.0);
-            let viewport_h = (self.ui.window_height - 180.0).max(100.0);
+            let (viewport_w, viewport_h) = self.viewer_viewport_size();
 
             let canvas_width = self.viewer.image_width * self.viewer.zoom_factor;
             let canvas_height = self.viewer.image_height * self.viewer.zoom_factor;
@@ -1257,7 +1016,7 @@ impl AppModel {
             // Keep the raster image and vector crop overlay in separate layers so the
             // renderer can never composite the image above the selection rectangle.
             let image_layer = cosmic::widget::container(
-                cosmic::widget::image(self.viewer.image_handle.as_ref().unwrap().clone())
+                cosmic::widget::image(image_handle.clone())
                     .width(Length::Fixed(canvas_width))
                     .height(Length::Fixed(canvas_height))
                     .content_fit(cosmic::iced::ContentFit::Contain),
@@ -1267,14 +1026,26 @@ impl AppModel {
             .align_x(Alignment::Center)
             .align_y(Alignment::Center);
 
-            let crop_layer = cosmic::iced::widget::Canvas::new(canvas_program)
+            let interaction_layer = cosmic::iced::widget::Canvas::new(canvas_program)
                 .width(Length::Fixed(surface_width))
                 .height(Length::Fixed(surface_height));
 
-            let image_canvas = cosmic::iced::widget::stack(vec![
-                Element::from(image_layer),
-                Element::from(crop_layer),
-            ]);
+            let mut layers = vec![Element::from(image_layer)];
+            if let Some(selection) = &self.editor.background_overlay {
+                let selection_layer = cosmic::widget::container(
+                    cosmic::widget::image(selection.clone())
+                        .width(Length::Fixed(canvas_width))
+                        .height(Length::Fixed(canvas_height))
+                        .content_fit(cosmic::iced::ContentFit::Contain),
+                )
+                .width(Length::Fixed(surface_width))
+                .height(Length::Fixed(surface_height))
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center);
+                layers.push(Element::from(selection_layer));
+            }
+            layers.push(Element::from(interaction_layer));
+            let image_canvas = cosmic::iced::widget::stack(layers);
 
             let scrollable_canvas = cosmic::iced::widget::scrollable(image_canvas)
                 .direction(cosmic::iced::widget::scrollable::Direction::Both {
