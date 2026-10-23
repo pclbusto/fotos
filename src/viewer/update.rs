@@ -13,6 +13,12 @@ impl AppModel {
         message: ViewerMessage,
     ) -> Task<cosmic::Action<Message>> {
         match message {
+            ViewerMessage::PanBy { x, y } => {
+                return cosmic::iced::widget::scrollable::scroll_by(
+                    crate::viewer::scrollable_id(),
+                    cosmic::iced::widget::scrollable::AbsoluteOffset { x, y },
+                );
+            }
             ViewerMessage::ZoomIn => {
                 self.viewer.zoom_mode = ZoomMode::Custom((self.viewer.zoom_factor + 0.05).min(5.0));
                 self.update_zoom_factor();

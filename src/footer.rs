@@ -110,46 +110,17 @@ impl AppModel {
             let zoom_label =
                 cosmic::widget::text(format!("{}%", (self.viewer.zoom_factor * 100.0) as u32));
 
-            let hidden_slot = || {
-                cosmic::iced::widget::Space::new()
-                    .width(Length::Fixed(32.0))
-                    .height(Length::Fixed(32.0))
-            };
-            let prev_slot: Element<'_, Message> = if self.ui.viewer_controls_hovered {
-                prev_btn.into()
-            } else {
-                hidden_slot().into()
-            };
-            let zoom_out_slot: Element<'_, Message> = if self.ui.viewer_controls_hovered {
-                zoom_out.into()
-            } else {
-                hidden_slot().into()
-            };
-            let zoom_in_slot: Element<'_, Message> = if self.ui.viewer_controls_hovered {
-                zoom_in.into()
-            } else {
-                hidden_slot().into()
-            };
-            let next_slot: Element<'_, Message> = if self.ui.viewer_controls_hovered {
-                next_btn.into()
-            } else {
-                hidden_slot().into()
-            };
-
             let center_row = cosmic::iced::widget::Row::new()
                 .spacing(spacing.space_s)
                 .align_y(Alignment::Center)
-                .push(prev_slot)
-                .push(zoom_out_slot)
+                .push(prev_btn)
+                .push(zoom_out)
                 .push(zoom_fit)
                 .push(zoom_width)
                 .push(zoom_actual)
                 .push(zoom_label)
-                .push(zoom_in_slot)
-                .push(next_slot);
-            let center_controls = cosmic::iced::widget::mouse_area(center_row)
-                .on_enter(Message::Ui(UiMessage::SetViewerControlsHovered(true)))
-                .on_exit(Message::Ui(UiMessage::SetViewerControlsHovered(false)));
+                .push(zoom_in)
+                .push(next_btn);
 
             let info = format!(
                 "{}x{} px | {}",
@@ -171,19 +142,38 @@ impl AppModel {
             .on_press(Message::Ui(UiMessage::ToggleMetadata))
             .tooltip("Información detallada");
 
+            let visible_controls: Element<'_, Message> = cosmic::widget::container(
+                cosmic::iced::widget::row![
+                    left_col,
+                    cosmic::iced::widget::Space::new().width(Length::Fill),
+                    center_row,
+                    cosmic::iced::widget::Space::new().width(Length::Fill),
+                    info_btn
+                ]
+                .align_y(Alignment::Center)
+                .spacing(16),
+            )
+            .padding([4, 8])
+            .into();
+
+            let footer_content: Element<'_, Message> = if self.ui.viewer_controls_hovered {
+                visible_controls
+            } else {
+                cosmic::iced::widget::Space::new()
+                    .width(Length::Fill)
+                    .height(Length::Fixed(40.0))
+                    .into()
+            };
+
             Some(
-                cosmic::widget::container(
-                    cosmic::iced::widget::row![
-                        left_col,
-                        cosmic::iced::widget::Space::new().width(Length::Fill),
-                        center_controls,
-                        cosmic::iced::widget::Space::new().width(Length::Fill),
-                        info_btn
-                    ]
-                    .align_y(Alignment::Center)
-                    .spacing(16),
+                cosmic::iced::widget::mouse_area(
+                    cosmic::widget::container(footer_content)
+                        .width(Length::Fill)
+                        .height(Length::Fixed(40.0))
+                        .align_y(Alignment::Center),
                 )
-                .padding(8)
+                .on_enter(Message::Ui(UiMessage::SetViewerControlsHovered(true)))
+                .on_exit(Message::Ui(UiMessage::SetViewerControlsHovered(false)))
                 .into(),
             )
         } else {

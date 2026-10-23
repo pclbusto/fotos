@@ -13,6 +13,7 @@ use crate::browser::BrowserItem;
 use crate::editor;
 use crate::message::{BrowserMessage, EditorMessage, Message, UiMessage, ViewerMessage};
 use crate::preferences::Preferences;
+use crate::shortcuts_panel;
 use crate::state::{
     BrowserState, DrawerMode, EditOperation, EditorState, PendingAction, SettingsState, UiState,
     ViewMode, ViewerState,
@@ -486,6 +487,8 @@ impl cosmic::Application for AppModel {
                 is_fullscreen: false,
                 window_id: None,
                 viewer_controls_hovered: false,
+                shortcuts_query: String::new(),
+                shortcuts_filter: 0,
                 error_message: None,
                 notification_message: None,
                 drawer_mode: None,
@@ -597,6 +600,20 @@ impl cosmic::Application for AppModel {
                     .title("Información de la Imagen"),
                 )
             }
+            DrawerMode::Shortcuts => Some(
+                cosmic::app::context_drawer::context_drawer(
+                    shortcuts_panel::view_content(
+                        &self.ui.shortcuts_query,
+                        self.ui.shortcuts_filter,
+                    ),
+                    Message::Ui(UiMessage::CloseDrawer),
+                )
+                .title("Atajos de teclado")
+                .header(shortcuts_panel::view_header(
+                    &self.ui.shortcuts_query,
+                    self.ui.shortcuts_filter,
+                )),
+            ),
             DrawerMode::Transform => {
                 let source_width = self
                     .viewer
@@ -792,6 +809,13 @@ impl cosmic::Application for AppModel {
             .then_some(Message::Ui(UiMessage::RequestExit))
     }
 
+    fn on_escape(&mut self) -> Task<cosmic::Action<Self::Message>> {
+        self.handle_key_press(
+            cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Escape),
+            cosmic::iced::keyboard::Modifiers::default(),
+        )
+    }
+
     fn footer(&self) -> Option<Element<'_, Self::Message>> {
         self.footer_view()
     }
@@ -812,9 +836,7 @@ impl cosmic::Application for AppModel {
             }
             Message::Ui(message) => self.update_dialogs(message),
             Message::Viewer(message) => self.update_viewer(message),
-            Message::Surface(action) => {
-                cosmic::task::message(cosmic::Action::Cosmic(cosmic::app::Action::Surface(action)))
-            }
+            Message::Surface(action) => cosmic::task::message(cosmic::Action::Surface(action)),
         }
     }
 }
@@ -866,7 +888,7 @@ impl AppModel {
                             "Carpeta".to_string(),
                             "—".to_string(),
                             cosmic::widget::container(
-                                cosmic::widget::icon::from_name("folder").size(32),
+                                cosmic::widget::icon::from_name("folder-symbolic").size(32),
                             )
                             .width(Length::Fixed(40.0))
                             .height(Length::Fixed(40.0))
@@ -925,7 +947,7 @@ impl AppModel {
                         .style(move |theme| {
                             if is_focused {
                                 let cosmic_theme = theme.cosmic();
-                                let mut style = cosmic::theme::Container::primary(cosmic_theme);
+                                let mut style = browser_view::selection_style(theme);
                                 style.border.radius = cosmic_theme.corner_radii.radius_s.into();
                                 style
                             } else {
@@ -1048,6 +1070,7 @@ impl AppModel {
             let image_canvas = cosmic::iced::widget::stack(layers);
 
             let scrollable_canvas = cosmic::iced::widget::scrollable(image_canvas)
+                .id(crate::viewer::scrollable_id())
                 .direction(cosmic::iced::widget::scrollable::Direction::Both {
                     vertical: Default::default(),
                     horizontal: Default::default(),

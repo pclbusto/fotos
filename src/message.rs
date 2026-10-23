@@ -14,7 +14,7 @@ pub enum Message {
     Viewer(ViewerMessage),
     Editor(EditorMessage),
     Ui(UiMessage),
-    Surface(cosmic::surface::Action),
+    Surface(cosmic::surface::Action<Message>),
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +48,7 @@ pub enum ViewerMessage {
     ActiveImageLoaded(Result<(PathBuf, DynamicImage), String>),
     PreloadCompleted(Result<(PathBuf, CachedImage), (PathBuf, String)>),
     MetadataLoaded(PathBuf, ImageMetadata),
+    PanBy { x: f32, y: f32 },
 }
 
 #[derive(Debug, Clone)]
@@ -84,6 +85,9 @@ pub enum EditorMessage {
 pub enum UiMessage {
     ToggleAbout,
     ToggleMetadata,
+    ToggleShortcuts,
+    ShortcutsQueryChanged(String),
+    ShortcutsFilterSelected(usize),
     ToggleSettings,
     ToggleFullscreen,
     SetViewerControlsHovered(bool),
@@ -97,6 +101,7 @@ pub enum UiMessage {
     DeleteSelection { permanent: bool },
     ConfirmDelete,
     CancelDelete,
+    CancelPendingAction,
     KeyPress(Key, Modifiers),
 }
 

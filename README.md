@@ -66,13 +66,21 @@ cargo run --release -- /ruta/a/imagenes
 | `+` / `-` | Acercar o alejar |
 | `0` | Tamaño real (100 %) |
 | `Ctrl` + rueda | Cambiar zoom |
+| Arrastrar con botón izquierdo | Desplazar una imagen ampliada |
+| Botón central | Activar la herramienta de recorte |
 | `Ctrl+O` | Abrir imagen |
 | `Ctrl+S` | Guardar copia |
 | `Ctrl+Z` | Deshacer última transformación |
+| `Ctrl+1` / `Ctrl+2` | Cambiar entre vista de grilla y lista |
+| `Ctrl+Espacio` | Mostrar información de la foto |
+| `F1` | Mostrar información acerca de Fotos |
+| `Ctrl+F1` | Mostrar los atajos de teclado |
+| `Ctrl+W` / `Ctrl+Q` | Cerrar Fotos |
 | `Delete` | Mover la selección a la papelera |
 | `Ctrl+Delete` | Eliminar permanentemente |
 | `F11` | Activar o salir de pantalla completa |
-| `Esc` / `Backspace` | Volver al navegador desde el visor |
+| `Esc` | Cerrar el panel, diálogo o herramienta abierta |
+| `Backspace` | Volver al navegador desde el visor |
 
 ## Estado del proyecto
 

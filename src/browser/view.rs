@@ -5,11 +5,12 @@ use cosmic::Element;
 use crate::message::Message;
 
 pub fn folder_tile(name: String, focused: bool) -> Element<'static, Message> {
-    let icon = cosmic::widget::container(cosmic::widget::icon::from_name("folder").size(96))
-        .width(Length::Fixed(142.0))
-        .height(Length::Fixed(112.0))
-        .align_x(Alignment::Center)
-        .align_y(Alignment::Center);
+    let icon =
+        cosmic::widget::container(cosmic::widget::icon::from_name("folder-symbolic").size(96))
+            .width(Length::Fixed(142.0))
+            .height(Length::Fixed(112.0))
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center);
     let label = cosmic::widget::container(
         cosmic::widget::text::body(name)
             .class(cosmic::theme::Text::Custom(label_style))
@@ -78,7 +79,7 @@ fn tile_container<'a>(
         .style(move |theme| {
             if focused {
                 let cosmic_theme = theme.cosmic();
-                let mut style = cosmic::theme::Container::primary(cosmic_theme);
+                let mut style = selection_style(theme);
                 style.border.radius = cosmic_theme.corner_radii.radius_m.into();
                 style
             } else {
@@ -86,6 +87,22 @@ fn tile_container<'a>(
             }
         })
         .into()
+}
+
+pub fn selection_style(theme: &cosmic::theme::Theme) -> cosmic::iced::widget::container::Style {
+    let cosmic_theme = theme.cosmic();
+    let background = cosmic_theme.background(theme.transparent);
+    cosmic::iced::widget::container::Style {
+        icon_color: Some(background.component.on.into()),
+        text_color: Some(background.component.on.into()),
+        background: Some(background.component.selected.into()),
+        border: cosmic::iced::Border {
+            color: background.component.divider.into(),
+            width: 1.0,
+            radius: cosmic_theme.corner_radii.radius_s.into(),
+        },
+        ..Default::default()
+    }
 }
 
 pub fn label_style(theme: &cosmic::theme::Theme) -> cosmic::iced::widget::text::Style {

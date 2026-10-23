@@ -34,7 +34,13 @@ impl AppModel {
             self.editor.background_feather,
         ) {
             self.editor.background_selected_pixels = mask.selected_pixels();
-            let overlay = mask.overlay();
+            let active_theme = cosmic::theme::active();
+            let accent = active_theme.cosmic().accent_color();
+            let overlay = mask.overlay([
+                (accent.red * 255.0).round() as u8,
+                (accent.green * 255.0).round() as u8,
+                (accent.blue * 255.0).round() as u8,
+            ]);
             self.editor.background_overlay = Some(Handle::from_rgba(
                 overlay.width(),
                 overlay.height(),

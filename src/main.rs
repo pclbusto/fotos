@@ -9,6 +9,7 @@ pub mod footer;
 pub mod input;
 pub mod message;
 pub mod preferences;
+pub mod shortcuts_panel;
 pub mod state;
 pub mod viewer;
 

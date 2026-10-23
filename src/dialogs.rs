@@ -3,6 +3,7 @@ use cosmic::Application as _;
 
 use crate::app::AppModel;
 use crate::message::{BrowserMessage, Message, UiMessage};
+use crate::shortcuts_panel;
 use crate::state::{DrawerMode, PendingAction, PendingDelete};
 
 impl AppModel {
@@ -30,6 +31,23 @@ impl AppModel {
                     self.core.set_show_context(true);
                 }
                 self.update_zoom_factor();
+            }
+            UiMessage::ToggleShortcuts => {
+                self.clear_scale_preview();
+                self.clear_background_selection();
+                if self.core.window.show_context
+                    && self.ui.drawer_mode == Some(DrawerMode::Shortcuts)
+                {
+                    self.core.set_show_context(false);
+                } else {
+                    self.ui.drawer_mode = Some(DrawerMode::Shortcuts);
+                    self.core.set_show_context(true);
+                }
+                self.update_zoom_factor();
+            }
+            UiMessage::ShortcutsQueryChanged(query) => self.ui.shortcuts_query = query,
+            UiMessage::ShortcutsFilterSelected(filter) => {
+                self.ui.shortcuts_filter = filter.min(shortcuts_panel::CATEGORY_FILTERS.len() - 1);
             }
             UiMessage::ToggleSettings => {
                 self.clear_scale_preview();
@@ -148,6 +166,7 @@ impl AppModel {
                 ]);
             }
             UiMessage::CancelDelete => self.ui.pending_delete = None,
+            UiMessage::CancelPendingAction => self.ui.pending_action = None,
             UiMessage::ShowHiddenChanged(show) => {
                 self.settings.show_hidden = show;
                 self.save_preferences();

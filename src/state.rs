@@ -44,6 +44,7 @@ pub enum BrowserLayout {
 pub enum DrawerMode {
     About,
     Metadata,
+    Shortcuts,
     Transform,
     Settings,
 }
@@ -117,6 +118,8 @@ pub struct UiState {
     pub is_fullscreen: bool,
     pub window_id: Option<cosmic::iced::window::Id>,
     pub viewer_controls_hovered: bool,
+    pub shortcuts_query: String,
+    pub shortcuts_filter: usize,
     pub error_message: Option<String>,
     pub notification_message: Option<String>,
     pub drawer_mode: Option<DrawerMode>,

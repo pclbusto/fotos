@@ -4,6 +4,10 @@ pub mod update;
 
 pub use canvas::{CanvasState, ImageCanvasProgram};
 
+pub fn scrollable_id() -> cosmic::iced::widget::Id {
+    cosmic::iced::widget::Id::new("viewer-image-scrollable")
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ZoomMode {
     FitWindow,

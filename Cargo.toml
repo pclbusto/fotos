@@ -14,9 +14,12 @@ kamadak-exif = "0.6.1"
 
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic.git"
-rev = "e7f37f3e817a13b81f63266df98f2528ef608eaf"
+rev = "e1f2cd2e52226aa50d59bb2cd6d43ffe290106ed"
+default-features = false
 features = [
+    "tokio",
+    "winit",
     "wgpu",
-    "xdg-portal",
+    "surface-message",
     "about"
 ]

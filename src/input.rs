@@ -13,8 +13,46 @@ impl AppModel {
         key: Key,
         modifiers: Modifiers,
     ) -> Task<cosmic::Action<Message>> {
+        if key == Key::Named(Named::Escape) {
+            if self.ui.pending_delete.is_some() {
+                return self.update(Message::Ui(UiMessage::CancelDelete));
+            }
+            if self.ui.pending_action.is_some() {
+                return self.update(Message::Ui(UiMessage::CancelPendingAction));
+            }
+            if self.core.window.show_context {
+                return self.update(Message::Ui(UiMessage::CloseDrawer));
+            }
+            if self.ui.error_message.is_some() {
+                return self.update(Message::Ui(UiMessage::ClearError));
+            }
+            if self.ui.notification_message.is_some() {
+                return self.update(Message::Ui(UiMessage::ClearNotification));
+            }
+            if self.editor.selecting_background {
+                self.clear_background_selection();
+                return Task::none();
+            }
+            if self.editor.cropping {
+                return self.update(Message::Editor(EditorMessage::ToggleCropMode));
+            }
+        }
+
         if modifiers.control() {
             match &key {
+                Key::Character(c) if c == "1" && self.ui.view_mode == ViewMode::Browser => {
+                    return self.update(Message::Browser(BrowserMessage::SetLayout(
+                        crate::state::BrowserLayout::Grid,
+                    )));
+                }
+                Key::Character(c) if c == "2" && self.ui.view_mode == ViewMode::Browser => {
+                    return self.update(Message::Browser(BrowserMessage::SetLayout(
+                        crate::state::BrowserLayout::List,
+                    )));
+                }
+                Key::Character(c) if c.eq_ignore_ascii_case("w") || c.eq_ignore_ascii_case("q") => {
+                    return self.update(Message::Ui(UiMessage::RequestExit));
+                }
                 Key::Character(c)
                     if c.eq_ignore_ascii_case("o") && self.ui.view_mode == ViewMode::Viewer =>
                 {
@@ -36,6 +74,22 @@ impl AppModel {
 
         if key == Key::Named(Named::F11) {
             return self.update(Message::Ui(UiMessage::ToggleFullscreen));
+        }
+
+        if key == Key::Named(Named::F1) {
+            let message = if modifiers.control() {
+                UiMessage::ToggleShortcuts
+            } else {
+                UiMessage::ToggleAbout
+            };
+            return self.update(Message::Ui(message));
+        }
+
+        if modifiers.control()
+            && matches!(&key, Key::Character(character) if character == " ")
+            && self.ui.view_mode == ViewMode::Viewer
+        {
+            return self.update(Message::Ui(UiMessage::ToggleMetadata));
         }
 
         if key == Key::Named(Named::Delete) {
@@ -76,9 +130,6 @@ impl AppModel {
                 }
             }
             ViewMode::Viewer => match key {
-                Key::Named(Named::Escape) if self.editor.selecting_background => {
-                    self.editor.selecting_background = false;
-                }
                 Key::Named(Named::ArrowRight) if !self.viewer.images.is_empty() => {
                     let index = (self.viewer.index + 1) % self.viewer.images.len();
                     let path = self.viewer.images[index].clone();

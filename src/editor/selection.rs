@@ -75,7 +75,7 @@ impl SelectionMask {
         self.alpha.iter().filter(|&&alpha| alpha != 0).count()
     }
 
-    pub fn overlay(&self) -> RgbaImage {
+    pub fn overlay(&self, color: [u8; 3]) -> RgbaImage {
         let mut output = RgbaImage::new(self.width, self.height);
         for y in 0..self.height {
             for x in 0..self.width {
@@ -85,7 +85,12 @@ impl SelectionMask {
                     output.put_pixel(
                         x,
                         y,
-                        Rgba([64, 140, 255, ((alpha as u16 * 96) / 255) as u8]),
+                        Rgba([
+                            color[0],
+                            color[1],
+                            color[2],
+                            ((alpha as u16 * 96) / 255) as u8,
+                        ]),
                     );
                 }
             }

@@ -20,6 +20,7 @@ enum HeaderAction {
     Reset,
     Fullscreen,
     Information,
+    Shortcuts,
     Settings,
     About,
 }
@@ -37,6 +38,7 @@ impl menu::Action for HeaderAction {
             Self::Reset => Message::Viewer(ViewerMessage::ResetImage),
             Self::Fullscreen => Message::Ui(UiMessage::ToggleFullscreen),
             Self::Information => Message::Ui(UiMessage::ToggleMetadata),
+            Self::Shortcuts => Message::Ui(UiMessage::ToggleShortcuts),
             Self::Settings => Message::Ui(UiMessage::ToggleSettings),
             Self::About => Message::Ui(UiMessage::ToggleAbout),
         }
@@ -180,6 +182,11 @@ impl AppModel {
                 "Ajustes",
                 menu_icon("preferences-system-symbolic"),
                 HeaderAction::Settings,
+            ),
+            menu::Item::Button(
+                "Atajos",
+                menu_icon("preferences-desktop-keyboard-shortcuts-symbolic"),
+                HeaderAction::Shortcuts,
             ),
             menu::Item::Button(
                 "Acerca de",

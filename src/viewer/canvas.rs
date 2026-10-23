@@ -109,6 +109,17 @@ impl Program<Message, cosmic::theme::Theme, cosmic::iced::Renderer> for ImageCan
                     return Some(canvas::Action::publish(Message::Viewer(message)).and_capture());
                 }
             }
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
+                state.is_dragging = false;
+                state.drag_start = None;
+                if !self.is_cropping_mode {
+                    return Some(
+                        canvas::Action::publish(Message::Editor(EditorMessage::ToggleCropMode))
+                            .and_capture(),
+                    );
+                }
+                return Some(canvas::Action::capture());
+            }
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(pos) = cursor.position_in(bounds) {
                     if self.is_selecting_background {
@@ -180,6 +191,7 @@ impl Program<Message, cosmic::theme::Theme, cosmic::iced::Renderer> for ImageCan
                         }
                         return Some(canvas::Action::capture());
                     }
+                    return Some(canvas::Action::capture());
                 }
             }
             canvas::Event::Mouse(mouse::Event::CursorMoved { .. }) => {
@@ -240,6 +252,17 @@ impl Program<Message, cosmic::theme::Theme, cosmic::iced::Renderer> for ImageCan
                                     .and_capture(),
                                 );
                             }
+                        } else if let Some(previous) = state.drag_start.replace(pos) {
+                            let x = previous.x - pos.x;
+                            let y = previous.y - pos.y;
+                            if x != 0.0 || y != 0.0 {
+                                return Some(
+                                    canvas::Action::publish(Message::Viewer(
+                                        ViewerMessage::PanBy { x, y },
+                                    ))
+                                    .and_capture(),
+                                );
+                            }
                         }
                     }
                 }
@@ -248,6 +271,7 @@ impl Program<Message, cosmic::theme::Theme, cosmic::iced::Renderer> for ImageCan
                 if state.is_dragging {
                     let was_new_selection = matches!(state.crop_drag, CropDrag::New);
                     state.is_dragging = false;
+                    state.drag_start = None;
                     state.crop_drag = CropDrag::None;
                     state.initial_crop = None;
                     if self.is_cropping_mode && was_new_selection {
@@ -264,6 +288,7 @@ impl Program<Message, cosmic::theme::Theme, cosmic::iced::Renderer> for ImageCan
                     if self.is_cropping_mode {
                         return Some(canvas::Action::capture());
                     }
+                    return Some(canvas::Action::capture());
                 }
             }
             _ => {}
@@ -273,12 +298,16 @@ impl Program<Message, cosmic::theme::Theme, cosmic::iced::Renderer> for ImageCan
 
     fn mouse_interaction(
         &self,
-        _state: &Self::State,
+        state: &Self::State,
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> mouse::Interaction {
-        if self.is_selecting_background && cursor.is_over(bounds) {
+        if (self.is_selecting_background || self.is_cropping_mode) && cursor.is_over(bounds) {
             mouse::Interaction::Crosshair
+        } else if state.is_dragging && cursor.is_over(bounds) {
+            mouse::Interaction::Grabbing
+        } else if cursor.is_over(bounds) {
+            mouse::Interaction::Grab
         } else {
             mouse::Interaction::default()
         }
@@ -288,12 +317,13 @@ impl Program<Message, cosmic::theme::Theme, cosmic::iced::Renderer> for ImageCan
         &self,
         state: &Self::State,
         renderer: &cosmic::iced::Renderer,
-        _theme: &cosmic::theme::Theme,
+        theme: &cosmic::theme::Theme,
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
         let canvas_size = bounds.size();
+        let selection_color: Color = theme.cosmic().accent_color().into();
 
         if self.image_handle.is_some() {
             let zoom = self.zoom_factor;
@@ -370,7 +400,7 @@ impl Program<Message, cosmic::theme::Theme, cosmic::iced::Renderer> for ImageCan
                         frame.stroke(
                             &path,
                             canvas::Stroke::default()
-                                .with_color(Color::from_rgb(0.20, 0.78, 1.0))
+                                .with_color(selection_color)
                                 .with_width(3.0),
                         );
 
@@ -402,7 +432,7 @@ impl Program<Message, cosmic::theme::Theme, cosmic::iced::Renderer> for ImageCan
                             );
                             frame.fill(
                                 &CanvasPath::rectangle(handle.position(), handle.size()),
-                                Color::from_rgb(0.20, 0.78, 1.0),
+                                selection_color,
                             );
                         }
                     }
