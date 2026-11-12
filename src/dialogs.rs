@@ -33,6 +33,7 @@ impl AppModel {
                 self.update_zoom_factor();
             }
             UiMessage::ToggleShortcuts => {
+                self.ui.shortcut_capture = None;
                 self.clear_scale_preview();
                 self.clear_background_selection();
                 if self.core.window.show_context
@@ -49,6 +50,25 @@ impl AppModel {
             UiMessage::ShortcutsFilterSelected(filter) => {
                 self.ui.shortcuts_filter = filter.min(shortcuts_panel::CATEGORY_FILTERS.len() - 1);
             }
+            UiMessage::ToggleShortcutsEditing => {
+                self.ui.shortcuts_editing = !self.ui.shortcuts_editing;
+                self.ui.shortcut_capture = None;
+            }
+            UiMessage::StartShortcutCapture(action) => {
+                self.ui.shortcut_capture = Some(crate::state::ShortcutCapture {
+                    action,
+                    first: None,
+                });
+            }
+            UiMessage::CancelShortcutCapture => self.ui.shortcut_capture = None,
+            UiMessage::ResetShortcuts => {
+                self.ui.shortcut_capture = None;
+                self.settings.keymap = crate::keymap::Keymap::default();
+                if let Err(error) = self.settings.keymap.save() {
+                    self.ui.error_message =
+                        Some(format!("No se pudieron guardar los atajos: {error}"));
+                }
+            }
             UiMessage::ToggleSettings => {
                 self.clear_scale_preview();
                 self.clear_background_selection();
@@ -59,6 +79,14 @@ impl AppModel {
                 } else {
                     self.ui.drawer_mode = Some(DrawerMode::Settings);
                     self.core.set_show_context(true);
+                }
+            }
+            UiMessage::ToggleFolders => {
+                // Mismo comportamiento que el botón de arriba a la izquierda.
+                if self.core.is_condensed() {
+                    self.core.nav_bar_toggle_condensed();
+                } else {
+                    self.core.nav_bar_toggle();
                 }
             }
             UiMessage::ToggleFullscreen => {
@@ -83,14 +111,7 @@ impl AppModel {
                         .browser
                         .items
                         .get(self.browser.focused_index)
-                        .map(|item| match item {
-                            crate::browser::BrowserItem::Image { path, .. } => {
-                                (path.clone(), false, false)
-                            }
-                            crate::browser::BrowserItem::Folder { name, path } => {
-                                (path.clone(), true, name == "..")
-                            }
-                        }),
+                        .map(|item| (item.path().to_path_buf(), false, false)),
                     crate::state::ViewMode::Viewer => self
                         .viewer
                         .opened_file_path
@@ -170,10 +191,16 @@ impl AppModel {
             UiMessage::ShowHiddenChanged(show) => {
                 self.settings.show_hidden = show;
                 self.save_preferences();
+                self.rebuild_folder_tree();
                 let path = self.browser.current_dir.clone();
                 return self.update(Message::Browser(BrowserMessage::FolderSelected(Ok(path))));
             }
+            UiMessage::ZoomFilterChanged(index) => {
+                self.settings.zoom_filter = crate::viewer::ZoomFilter::from_index(index);
+                self.save_preferences();
+            }
             UiMessage::CloseDrawer => {
+                self.ui.shortcut_capture = None;
                 self.clear_scale_preview();
                 self.clear_background_selection();
                 self.core.set_show_context(false);
@@ -195,7 +222,7 @@ impl AppModel {
                     return Task::done(cosmic::Action::Cosmic(cosmic::app::Action::Close));
                 }
             }
-            UiMessage::KeyPress(_, _) => {
+            UiMessage::KeyPress(..) | UiMessage::RunAction(_) => {
                 unreachable!("keyboard input is handled by the application router")
             }
         }

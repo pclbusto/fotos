@@ -20,6 +20,7 @@ enum HeaderAction {
     Reset,
     Fullscreen,
     Information,
+    Folders,
     Shortcuts,
     Settings,
     About,
@@ -38,6 +39,7 @@ impl menu::Action for HeaderAction {
             Self::Reset => Message::Viewer(ViewerMessage::ResetImage),
             Self::Fullscreen => Message::Ui(UiMessage::ToggleFullscreen),
             Self::Information => Message::Ui(UiMessage::ToggleMetadata),
+            Self::Folders => Message::Ui(UiMessage::ToggleFolders),
             Self::Shortcuts => Message::Ui(UiMessage::ToggleShortcuts),
             Self::Settings => Message::Ui(UiMessage::ToggleSettings),
             Self::About => Message::Ui(UiMessage::ToggleAbout),
@@ -172,6 +174,11 @@ impl AppModel {
                 "Información",
                 menu_icon("dialog-information-symbolic"),
                 HeaderAction::Information,
+            ),
+            menu::Item::Button(
+                "Carpetas",
+                menu_icon("folder-symbolic"),
+                HeaderAction::Folders,
             ),
             menu::Item::Button(
                 "Pantalla completa",

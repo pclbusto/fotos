@@ -1,169 +1,57 @@
 use cosmic::iced::{Alignment, Length};
-use cosmic::widget::{self, column, container, row, settings, text, text_input};
+use cosmic::widget::{self, button, column, container, row, settings, text, text_input};
 use cosmic::Element;
 
+use crate::keymap::{Action, Binding, Category, Keymap};
 use crate::message::{Message, UiMessage};
+use crate::state::ShortcutCapture;
 
 pub const CATEGORY_FILTERS: [&str; 5] = ["Todas", "Archivo", "Edición", "Vista", "Ayuda"];
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Category {
-    File,
-    Edit,
-    View,
-    Help,
-}
-
-impl Category {
-    const ALL: [Self; 4] = [Self::File, Self::Edit, Self::View, Self::Help];
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::File => "Archivo",
-            Self::Edit => "Edición",
-            Self::View => "Vista",
-            Self::Help => "Ayuda",
-        }
-    }
-}
-
-struct Shortcut {
+/// Atajos fijos (ratón o teclas reservadas) que no se pueden reasignar.
+struct FixedShortcut {
     keys: &'static [&'static str],
     name: &'static str,
     description: &'static str,
     category: Category,
 }
 
-const SHORTCUTS: &[Shortcut] = &[
-    Shortcut {
-        keys: &["Ctrl", "O"],
-        name: "Abrir imagen",
-        description: "Abre una imagen desde el selector de archivos",
-        category: Category::File,
-    },
-    Shortcut {
-        keys: &["Ctrl", "S"],
-        name: "Guardar una copia",
-        description: "Guarda la imagen editada en un archivo nuevo",
-        category: Category::File,
-    },
-    Shortcut {
-        keys: &["Ctrl", "W"],
-        name: "Cerrar",
-        description: "Cierra Fotos y consulta antes si hay cambios",
-        category: Category::File,
-    },
-    Shortcut {
-        keys: &["Ctrl", "Q"],
-        name: "Salir",
-        description: "Cierra Fotos y consulta antes si hay cambios",
-        category: Category::File,
-    },
-    Shortcut {
-        keys: &["Ctrl", "Z"],
-        name: "Deshacer",
-        description: "Deshace la última transformación",
-        category: Category::Edit,
-    },
-    Shortcut {
-        keys: &["Delete"],
-        name: "Enviar a la papelera",
-        description: "Elimina la imagen o carpeta seleccionada",
-        category: Category::Edit,
-    },
-    Shortcut {
-        keys: &["Ctrl", "Delete"],
-        name: "Eliminar permanentemente",
-        description: "Elimina la selección sin pasar por la papelera",
-        category: Category::Edit,
-    },
-    Shortcut {
-        keys: &["Ctrl", "1"],
-        name: "Vista de grilla",
-        description: "Muestra el navegador como una grilla de miniaturas",
-        category: Category::View,
-    },
-    Shortcut {
-        keys: &["Ctrl", "2"],
-        name: "Vista de lista",
-        description: "Muestra el navegador como una lista detallada",
-        category: Category::View,
-    },
-    Shortcut {
-        keys: &["Ctrl", "Espacio"],
-        name: "Información de la foto",
-        description: "Muestra u oculta los metadatos de la imagen",
-        category: Category::View,
-    },
-    Shortcut {
-        keys: &["← / →"],
-        name: "Navegar imágenes",
-        description: "Abre la imagen anterior o siguiente",
-        category: Category::View,
-    },
-    Shortcut {
-        keys: &["+ / −"],
-        name: "Cambiar zoom",
-        description: "Acerca o aleja la imagen",
-        category: Category::View,
-    },
-    Shortcut {
+const FIXED_SHORTCUTS: &[FixedShortcut] = &[
+    FixedShortcut {
         keys: &["Ctrl", "Rueda"],
         name: "Zoom con el mouse",
         description: "Cambia el zoom desde el lienzo",
         category: Category::View,
     },
-    Shortcut {
+    FixedShortcut {
         keys: &["Arrastre izquierdo"],
         name: "Desplazar imagen",
         description: "Mueve una imagen ampliada dentro del visor",
         category: Category::View,
     },
-    Shortcut {
+    FixedShortcut {
         keys: &["Botón central"],
         name: "Herramienta de recorte",
         description: "Activa el modo de recorte",
         category: Category::Edit,
     },
-    Shortcut {
-        keys: &["0"],
-        name: "Tamaño real",
-        description: "Muestra la imagen al 100 %",
-        category: Category::View,
-    },
-    Shortcut {
-        keys: &["F11"],
-        name: "Pantalla completa",
-        description: "Activa o desactiva la pantalla completa",
-        category: Category::View,
-    },
-    Shortcut {
+    FixedShortcut {
         keys: &["Esc"],
         name: "Cerrar o cancelar",
         description: "Cierra cualquier panel, diálogo o herramienta abierta",
         category: Category::View,
     },
-    Shortcut {
-        keys: &["Retroceso"],
-        name: "Volver",
-        description: "Vuelve del visor al navegador",
-        category: Category::View,
-    },
-    Shortcut {
-        keys: &["F1"],
-        name: "Acerca de Fotos",
-        description: "Muestra la versión, autoría, licencia y enlaces",
-        category: Category::Help,
-    },
-    Shortcut {
-        keys: &["Ctrl", "F1"],
-        name: "Atajos de teclado",
-        description: "Muestra u oculta este panel",
-        category: Category::Help,
-    },
 ];
 
-pub fn view_header<'a>(query: &'a str, filter: usize) -> Element<'a, Message> {
+pub fn view_header<'a>(query: &'a str, filter: usize, editing: bool) -> Element<'a, Message> {
+    let edit_button = if editing {
+        button::suggested("Listo")
+    } else {
+        button::standard("Editar")
+    }
+    .leading_icon(widget::icon::from_name("document-edit-symbolic").size(16))
+    .on_press(Message::Ui(UiMessage::ToggleShortcutsEditing));
+
     row![
         text_input::search_input("Buscar un atajo…", query)
             .on_input(|query| Message::Ui(UiMessage::ShortcutsQueryChanged(query)))
@@ -172,48 +60,97 @@ pub fn view_header<'a>(query: &'a str, filter: usize) -> Element<'a, Message> {
         widget::dropdown(&CATEGORY_FILTERS[..], Some(filter), |filter| {
             Message::Ui(UiMessage::ShortcutsFilterSelected(filter))
         }),
+        edit_button,
     ]
     .spacing(8)
     .align_y(Alignment::Center)
     .into()
 }
 
-pub fn view_content<'a>(query: &str, filter: usize) -> Element<'a, Message> {
+fn matches_query(query: &str, name: &str, description: &str, keys: &[String]) -> bool {
+    query.is_empty()
+        || name.to_lowercase().contains(query)
+        || description.to_lowercase().contains(query)
+        || keys
+            .join("+")
+            .to_lowercase()
+            .contains(&query.replace(' ', ""))
+}
+
+fn binding_search_text(bindings: &[Binding]) -> Vec<String> {
+    bindings
+        .iter()
+        .map(|binding| binding.labels().join("+").replace(' ', ""))
+        .collect()
+}
+
+pub fn view_content<'a>(
+    query: &str,
+    filter: usize,
+    keymap: &Keymap,
+    editing: bool,
+    capture: Option<&ShortcutCapture>,
+) -> Element<'a, Message> {
     let wanted = filter
         .checked_sub(1)
         .and_then(|index| Category::ALL.get(index))
         .copied();
     let query = query.trim().to_lowercase();
     let mut sections = column![].spacing(16);
-    let mut any = false;
 
+    if editing {
+        sections = sections.push(
+            container(text::caption(
+                "Elegí «Asignar» y presioná hasta dos teclas. Si presionás dos veces la misma \
+                 tecla, el atajo queda sólo con esa. Esc tras la primera tecla también la deja \
+                 sola; antes, cancela.",
+            ))
+            .padding([0, 4]),
+        );
+    }
+
+    let mut any = false;
     for category in Category::ALL {
         if wanted.is_some_and(|wanted| wanted != category) {
             continue;
         }
-        let items: Vec<&Shortcut> = SHORTCUTS
-            .iter()
-            .filter(|shortcut| {
-                shortcut.category == category
-                    && (query.is_empty()
-                        || shortcut.name.to_lowercase().contains(&query)
-                        || shortcut.description.to_lowercase().contains(&query)
-                        || shortcut
-                            .keys
-                            .join("+")
-                            .to_lowercase()
-                            .contains(&query.replace(' ', "")))
-            })
-            .collect();
-        if items.is_empty() {
-            continue;
-        }
-        any = true;
         let mut section = settings::section().title(category.label());
-        for shortcut in items {
-            section = section.add(shortcut_row(shortcut));
+        let mut has_items = false;
+
+        for action in Action::ALL {
+            if action.category() != category {
+                continue;
+            }
+            let bindings = keymap.bindings(action);
+            if !matches_query(
+                &query,
+                action.name(),
+                action.description(),
+                &binding_search_text(bindings),
+            ) {
+                continue;
+            }
+            let capturing = capture.filter(|capture| capture.action == action);
+            section = section.add(action_row(action, bindings, editing, capturing));
+            has_items = true;
         }
-        sections = sections.push(section);
+
+        for shortcut in FIXED_SHORTCUTS {
+            if shortcut.category != category {
+                continue;
+            }
+            let keys: Vec<String> = shortcut.keys.iter().map(|key| key.to_string()).collect();
+            if !matches_query(&query, shortcut.name, shortcut.description, &keys) {
+                continue;
+            }
+            section = section.add(fixed_row(shortcut, editing));
+            has_items = true;
+        }
+
+        if has_items {
+            any = true;
+            sections = sections.push(section);
+        }
     }
 
     if !any {
@@ -224,33 +161,105 @@ pub fn view_content<'a>(query: &str, filter: usize) -> Element<'a, Message> {
                 .padding(24),
         );
     }
+
+    if editing {
+        let reset = button::destructive("Restablecer valores predeterminados")
+            .on_press_maybe(
+                (!keymap.is_default()).then_some(Message::Ui(UiMessage::ResetShortcuts)),
+            );
+        sections = sections.push(container(reset).width(Length::Fill).center_x(Length::Fill));
+    }
+
     sections.into()
 }
 
-fn shortcut_row<'a>(shortcut: &Shortcut) -> Element<'a, Message> {
+fn description_column<'a>(name: &'a str, description: &'a str) -> Element<'a, Message> {
+    column![text::body(name), text::caption(description)]
+        .spacing(2)
+        .width(Length::Fill)
+        .into()
+}
+
+fn action_row<'a>(
+    action: Action,
+    bindings: &[Binding],
+    editing: bool,
+    capture: Option<&ShortcutCapture>,
+) -> Element<'a, Message> {
+    let mut trailing = row![].spacing(8).align_y(Alignment::Center);
+
+    if let Some(capture) = capture {
+        let prompt = match &capture.first {
+            None => row![text::caption("Presioná la primera tecla…")],
+            Some(first) => row![
+                binding_keys(first),
+                text::caption("Presioná la segunda tecla o repetí la misma"),
+            ],
+        };
+        trailing = trailing
+            .push(prompt.spacing(8).align_y(Alignment::Center))
+            .push(
+                button::standard("Cancelar")
+                    .on_press(Message::Ui(UiMessage::CancelShortcutCapture)),
+            );
+    } else {
+        if bindings.is_empty() {
+            trailing = trailing.push(text::caption("Sin asignar"));
+        }
+        for (index, binding) in bindings.iter().enumerate() {
+            if index > 0 {
+                trailing = trailing.push(text::caption("o"));
+            }
+            trailing = trailing.push(binding_keys(binding));
+        }
+        if editing {
+            trailing = trailing.push(
+                button::standard("Asignar")
+                    .on_press(Message::Ui(UiMessage::StartShortcutCapture(action))),
+            );
+        }
+    }
+
+    settings::item_row(vec![
+        description_column(action.name(), action.description()),
+        trailing.into(),
+    ])
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn fixed_row<'a>(shortcut: &'static FixedShortcut, editing: bool) -> Element<'a, Message> {
     let mut keys = row![].spacing(4).align_y(Alignment::Center);
     for (index, key) in shortcut.keys.iter().enumerate() {
         if index > 0 {
             keys = keys.push(text::caption("+"));
         }
-        keys = keys.push(keycap(key));
+        keys = keys.push(keycap(key.to_string()));
+    }
+    if editing {
+        keys = keys.push(text::caption("Fijo"));
     }
 
     settings::item_row(vec![
-        column![
-            text::body(shortcut.name),
-            text::caption(shortcut.description)
-        ]
-        .spacing(2)
-        .width(Length::Fill)
-        .into(),
+        description_column(shortcut.name, shortcut.description),
         keys.into(),
     ])
     .align_y(Alignment::Center)
     .into()
 }
 
-fn keycap<'a>(label: &'static str) -> Element<'a, Message> {
+fn binding_keys<'a>(binding: &Binding) -> Element<'a, Message> {
+    let mut keys = row![].spacing(4).align_y(Alignment::Center);
+    for (index, label) in binding.labels().into_iter().enumerate() {
+        if index > 0 {
+            keys = keys.push(text::caption("+"));
+        }
+        keys = keys.push(keycap(label));
+    }
+    keys.into()
+}
+
+fn keycap<'a>(label: String) -> Element<'a, Message> {
     container(text::caption_heading(label))
         .padding([2, 8])
         .class(cosmic::theme::Container::custom(|theme| {

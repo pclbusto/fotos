@@ -19,7 +19,7 @@ use crate::state::{
     ViewMode, ViewerState,
 };
 use crate::viewer::io as viewer_io;
-use crate::viewer::{CachedImage, ImageCanvasProgram, ZoomMode};
+use crate::viewer::{CachedImage, ImageCanvasProgram, ZoomMode, ZOOM_FILTER_LABELS};
 
 pub use crate::state::BrowserLayout;
 
@@ -40,6 +40,7 @@ const COSMIC_DRAWER_CONTENT_RESERVE: f32 = 368.0;
 const VIEWER_HORIZONTAL_CHROME: f32 = 40.0;
 const VIEWER_VERTICAL_CHROME: f32 = 180.0;
 const BROWSER_GRID_ITEM_WIDTH: f32 = 158.0;
+const NAV_BAR_WIDTH: f32 = 280.0;
 
 pub struct AppModel {
     pub core: cosmic::Core,
@@ -56,6 +57,7 @@ impl AppModel {
             self.browser.layout,
             self.settings.show_hidden,
             &self.browser.current_dir,
+            self.settings.zoom_filter,
         );
     }
 
@@ -83,6 +85,14 @@ impl AppModel {
                 },
             );
         }
+    }
+
+    /// Recalcula el árbol del panel de carpetas desde la base de datos.
+    pub(crate) fn rebuild_folder_tree(&mut self) {
+        let folders = self.browser.database.all_folders(self.settings.show_hidden);
+        let home = dirs::home_dir();
+        self.browser.folder_tree =
+            crate::browser::folders::FolderTree::build(&folders, home.as_deref());
     }
 
     pub(crate) fn apply_edit(&mut self, image: DynamicImage, operation: EditOperation) {
@@ -124,7 +134,7 @@ impl AppModel {
             if self.core.is_condensed() {
                 60.0
             } else {
-                280.0
+                NAV_BAR_WIDTH
             }
         } else {
             0.0
@@ -253,12 +263,6 @@ impl AppModel {
     pub(crate) fn handle_item_clicked(&mut self, idx: usize) -> Task<cosmic::Action<Message>> {
         if let Some(item) = self.browser.items.get(idx) {
             match item {
-                BrowserItem::Folder { path, .. } => {
-                    let path_clone = path.clone();
-                    return Task::perform(async move { path_clone }, |p| {
-                        Message::Browser(BrowserMessage::FolderSelected(Ok(p))).into()
-                    });
-                }
                 BrowserItem::Image { path, .. } => {
                     let mut viewer_images = Vec::new();
                     let mut viewer_index = 0;
@@ -375,65 +379,9 @@ impl cosmic::Application for AppModel {
         core.window.context_is_overlay = false;
         core.nav_bar_set_toggled(true);
 
-        let mut nav_entities = HashMap::new();
-        let mut nav_model = cosmic::widget::nav_bar::Model::builder();
-
-        if let Some(home) = dirs::home_dir() {
-            let mut home_id = None;
-            nav_model = nav_model.insert(|b| {
-                b.text("Carpeta personal")
-                    .icon(cosmic::widget::icon::from_name("user-home-symbolic"))
-                    .data(home.clone())
-                    .with_id(|id| home_id = Some(id))
-            });
-            if let Some(id) = home_id {
-                nav_entities.insert(home.clone(), id);
-            }
-        }
-
-        if let Some(pictures) = dirs::picture_dir() {
-            let mut pictures_id = None;
-            nav_model = nav_model.insert(|b| {
-                b.text("Imágenes")
-                    .icon(cosmic::widget::icon::from_name("folder-pictures-symbolic"))
-                    .data(pictures.clone())
-                    .with_id(|id| pictures_id = Some(id))
-            });
-            if let Some(id) = pictures_id {
-                nav_entities.insert(pictures.clone(), id);
-            }
-        }
-
-        if let Some(docs) = dirs::document_dir() {
-            let mut docs_id = None;
-            nav_model = nav_model.insert(|b| {
-                b.text("Documentos")
-                    .icon(cosmic::widget::icon::from_name("folder-documents-symbolic"))
-                    .data(docs.clone())
-                    .with_id(|id| docs_id = Some(id))
-            });
-            if let Some(id) = docs_id {
-                nav_entities.insert(docs.clone(), id);
-            }
-        }
-
-        if let Some(downloads) = dirs::download_dir() {
-            let mut downloads_id = None;
-            nav_model = nav_model.insert(|b| {
-                b.text("Descargas")
-                    .icon(cosmic::widget::icon::from_name("folder-download-symbolic"))
-                    .data(downloads.clone())
-                    .with_id(|id| downloads_id = Some(id))
-            });
-            if let Some(id) = downloads_id {
-                nav_entities.insert(downloads.clone(), id);
-            }
-        }
-
-        let mut nav_model = nav_model.build();
-        if let Some(&id) = nav_entities.get(&initial_dir) {
-            nav_model.activate(id);
-        }
+        // El modelo queda vacío: sólo hace que libcosmic muestre el botón de
+        // arriba a la izquierda, que abre el panel de carpetas (ver `nav_bar`).
+        let nav_model = cosmic::widget::nav_bar::Model::default();
 
         let mut app = AppModel {
             core,
@@ -443,8 +391,12 @@ impl cosmic::Application for AppModel {
                 focused_index: 0,
                 layout: preferences.layout,
                 nav_model,
-                nav_entities,
                 directory_generation: 0,
+                database: crate::database::ImageDatabase::load(),
+                scanning: true,
+                folder_tree: Default::default(),
+                expanded_folders: dirs::home_dir().into_iter().collect(),
+                folder_context: None,
             },
             viewer: ViewerState {
                 images: Vec::new(),
@@ -458,6 +410,7 @@ impl cosmic::Application for AppModel {
                 zoom_mode: ZoomMode::FitWindow,
                 opened_file_path: None,
                 metadata: None,
+                zoom_render: Default::default(),
             },
             editor: EditorState {
                 cropping: false,
@@ -479,6 +432,9 @@ impl cosmic::Application for AppModel {
             },
             settings: SettingsState {
                 show_hidden: preferences.show_hidden,
+                ignored_folders: crate::database::IgnoredFolders::load(),
+                zoom_filter: preferences.zoom_filter,
+                keymap: crate::keymap::Keymap::load(),
             },
             ui: UiState {
                 view_mode: ViewMode::Browser,
@@ -489,12 +445,17 @@ impl cosmic::Application for AppModel {
                 viewer_controls_hovered: false,
                 shortcuts_query: String::new(),
                 shortcuts_filter: 0,
+                shortcuts_editing: false,
+                shortcut_capture: None,
                 error_message: None,
                 notification_message: None,
                 drawer_mode: None,
                 about: About::default()
                     .name("Fotos")
-                    .icon(cosmic::widget::icon::from_name(Self::APP_ID))
+                    .icon(
+                        // Sin tamaño, la búsqueda devuelve el de 24 px y se ve pixelado.
+                        cosmic::widget::icon::from_name(Self::APP_ID).size(256).handle(),
+                    )
                     .version(env!("CARGO_PKG_VERSION"))
                     .author("Pedro")
                     .comments("Un visor de imágenes rápido y nativo para COSMIC Desktop.")
@@ -519,7 +480,14 @@ impl cosmic::Application for AppModel {
             app.core.nav_bar_set_toggled(false);
         }
 
-        let mut tasks = vec![startup_task];
+        app.rebuild_folder_tree();
+        app.browser.database.remove_ignored(&app.settings.ignored_folders);
+        let scan = crate::browser::folders::scan_task(
+            app.browser.database.clone(),
+            show_hidden,
+            app.settings.ignored_folders.clone(),
+        );
+        let mut tasks = vec![startup_task, scan];
         if let Some(image_path) = initial_image {
             app.viewer.images = vec![image_path.clone()];
             tasks.push(app.set_active_viewer_image(image_path));
@@ -532,11 +500,19 @@ impl cosmic::Application for AppModel {
         cosmic::iced::event::listen_with(|event, status, _window| {
             if status == cosmic::iced::event::Status::Ignored {
                 match event {
+                    // Escape llega por `on_escape`; se descarta aquí para no procesarla dos veces.
                     cosmic::iced::Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
                         key,
+                        physical_key,
                         modifiers,
                         ..
-                    }) => Some(Message::Ui(UiMessage::KeyPress(key, modifiers))),
+                    }) if key
+                        != cosmic::iced::keyboard::Key::Named(
+                            cosmic::iced::keyboard::key::Named::Escape,
+                        ) =>
+                    {
+                        Some(Message::Ui(UiMessage::KeyPress(key, physical_key, modifiers)))
+                    }
                     _ => None,
                 }
             } else {
@@ -556,18 +532,35 @@ impl cosmic::Application for AppModel {
         Some(&self.browser.nav_model)
     }
 
-    fn on_nav_select(
-        &mut self,
-        id: cosmic::widget::nav_bar::Id,
-    ) -> Task<cosmic::Action<Self::Message>> {
-        self.browser.nav_model.activate(id);
-        if let Some(path) = self.browser.nav_model.data::<PathBuf>(id) {
-            let path_clone = path.clone();
-            return Task::perform(async move { path_clone }, |p| {
-                cosmic::Action::App(Message::Browser(BrowserMessage::FolderSelected(Ok(p))))
-            });
+    /// El panel izquierdo muestra el árbol de carpetas escaneadas.
+    fn nav_bar(&self) -> Option<Element<'_, cosmic::Action<Self::Message>>> {
+        if !self.core.nav_bar_active() {
+            return None;
         }
-        Task::none()
+        let tree = crate::browser::folders::view(
+            &self.browser.folder_tree,
+            &self.browser.expanded_folders,
+            &self.browser.current_dir,
+            self.browser.scanning,
+            self.core.main_window_id(),
+        );
+        let width = if self.core.is_condensed() {
+            Length::Fill
+        } else {
+            Length::Fixed(NAV_BAR_WIDTH)
+        };
+        let panel = cosmic::widget::container(
+            cosmic::widget::scrollable(
+                cosmic::widget::container(tree).padding(cosmic::theme::spacing().space_xs),
+            )
+            .class(cosmic::style::iced::Scrollable::Minimal),
+        )
+        .class(cosmic::theme::Container::custom(
+            cosmic::widget::nav_bar::nav_bar_style,
+        ))
+        .width(width)
+        .height(Length::Fill);
+        Some(Element::from(panel).map(cosmic::Action::App))
     }
 
     fn header_start(&self) -> Vec<Element<'_, Self::Message>> {
@@ -605,6 +598,9 @@ impl cosmic::Application for AppModel {
                     shortcuts_panel::view_content(
                         &self.ui.shortcuts_query,
                         self.ui.shortcuts_filter,
+                        &self.settings.keymap,
+                        self.ui.shortcuts_editing,
+                        self.ui.shortcut_capture.as_ref(),
                     ),
                     Message::Ui(UiMessage::CloseDrawer),
                 )
@@ -612,6 +608,7 @@ impl cosmic::Application for AppModel {
                 .header(shortcuts_panel::view_header(
                     &self.ui.shortcuts_query,
                     self.ui.shortcuts_filter,
+                    self.ui.shortcuts_editing,
                 )),
             ),
             DrawerMode::Transform => {
@@ -782,12 +779,46 @@ impl cosmic::Application for AppModel {
                 )
             }
             DrawerMode::Settings => {
-                let content =
-                    cosmic::widget::settings::section().add(cosmic::widget::settings::item(
+                let content = cosmic::widget::settings::section()
+                    .add(cosmic::widget::settings::item(
                         "Mostrar archivos ocultos",
                         cosmic::widget::toggler(self.settings.show_hidden)
                             .on_toggle(|value| Message::Ui(UiMessage::ShowHiddenChanged(value))),
+                    ))
+                    .add(cosmic::widget::settings::item(
+                        "Algoritmo de zoom",
+                        cosmic::widget::dropdown(
+                            &ZOOM_FILTER_LABELS[..],
+                            Some(self.settings.zoom_filter.index()),
+                            |index| Message::Ui(UiMessage::ZoomFilterChanged(index)),
+                        ),
                     ));
+                let mut ignored = cosmic::widget::settings::section().title("Carpetas ignoradas");
+                if self.settings.ignored_folders.is_empty() {
+                    ignored = ignored.add(cosmic::widget::settings::item_row(vec![
+                        cosmic::widget::text::caption(
+                            "Ninguna. Usá el clic derecho en el panel de carpetas para ignorar una.",
+                        )
+                        .into(),
+                    ]));
+                } else {
+                    for folder in self.settings.ignored_folders.iter() {
+                        ignored = ignored.add(cosmic::widget::settings::item(
+                            folder.to_string_lossy().into_owned(),
+                            cosmic::widget::button::icon(
+                                cosmic::widget::icon::from_name("edit-delete-symbolic").size(16),
+                            )
+                            .on_press(Message::Browser(BrowserMessage::UnignoreFolder(
+                                folder.clone(),
+                            )))
+                            .tooltip("Dejar de ignorar"),
+                        ));
+                    }
+                }
+                let content = cosmic::iced::widget::Column::new()
+                    .spacing(cosmic::theme::spacing().space_m)
+                    .push(content)
+                    .push(ignored);
                 Some(
                     cosmic::app::context_drawer::context_drawer(
                         content,
@@ -810,10 +841,7 @@ impl cosmic::Application for AppModel {
     }
 
     fn on_escape(&mut self) -> Task<cosmic::Action<Self::Message>> {
-        self.handle_key_press(
-            cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Escape),
-            cosmic::iced::keyboard::Modifiers::default(),
-        )
+        self.handle_escape()
     }
 
     fn footer(&self) -> Option<Element<'_, Self::Message>> {
@@ -828,16 +856,18 @@ impl cosmic::Application for AppModel {
     }
 
     fn update(&mut self, message: Self::Message) -> Task<cosmic::Action<Self::Message>> {
-        match message {
+        let task = match message {
             Message::Browser(message) => self.update_browser(message),
             Message::Editor(message) => self.update_editor(message),
-            Message::Ui(UiMessage::KeyPress(key, modifiers)) => {
-                self.handle_key_press(key, modifiers)
+            Message::Ui(UiMessage::KeyPress(key, physical, modifiers)) => {
+                self.handle_key_press(key, physical, modifiers)
             }
+            Message::Ui(UiMessage::RunAction(action)) => self.run_action(action),
             Message::Ui(message) => self.update_dialogs(message),
             Message::Viewer(message) => self.update_viewer(message),
             Message::Surface(action) => cosmic::task::message(cosmic::Action::Surface(action)),
-        }
+        };
+        Task::batch([task, self.sync_zoom_render()])
     }
 }
 
@@ -883,24 +913,12 @@ impl AppModel {
                         String,
                         Element<'static, Message>,
                     ) = match item {
-                        BrowserItem::Folder { name, .. } => (
-                            name.clone(),
-                            "Carpeta".to_string(),
-                            "—".to_string(),
-                            cosmic::widget::container(
-                                cosmic::widget::icon::from_name("folder-symbolic").size(32),
-                            )
-                            .width(Length::Fixed(40.0))
-                            .height(Length::Fixed(40.0))
-                            .align_x(Alignment::Center)
-                            .align_y(Alignment::Center)
-                            .into(),
-                        ),
                         BrowserItem::Image {
                             name,
                             path,
                             file_size,
                             thumbnail,
+                            ..
                         } => {
                             let preview: Element<'static, Message> = if let Some(handle) = thumbnail
                             {
@@ -982,14 +1000,6 @@ impl AppModel {
                                 .class(cosmic::theme::Button::Transparent)
                                 .into()
                         }
-                        BrowserItem::Folder { name, .. } => {
-                            let content = browser_view::folder_tile(name.clone(), is_focused);
-                            cosmic::widget::button::custom(content)
-                                .on_press(Message::Browser(BrowserMessage::ItemClicked(idx)))
-                                .padding(4)
-                                .class(cosmic::theme::Button::Transparent)
-                                .into()
-                        }
                     };
                     row = row.push(item_element);
                 }
@@ -1037,8 +1047,13 @@ impl AppModel {
 
             // Keep the raster image and vector crop overlay in separate layers so the
             // renderer can never composite the image above the selection rectangle.
+            let gpu_filter = self.settings.zoom_filter.gpu_filter();
+            let display_handle = self
+                .display_handle()
+                .unwrap_or_else(|| image_handle.clone());
             let image_layer = cosmic::widget::container(
-                cosmic::widget::image(image_handle.clone())
+                cosmic::widget::image(display_handle)
+                    .filter_method(gpu_filter)
                     .width(Length::Fixed(canvas_width))
                     .height(Length::Fixed(canvas_height))
                     .content_fit(cosmic::iced::ContentFit::Contain),
@@ -1056,6 +1071,7 @@ impl AppModel {
             if let Some(selection) = &self.editor.background_overlay {
                 let selection_layer = cosmic::widget::container(
                     cosmic::widget::image(selection.clone())
+                        .filter_method(gpu_filter)
                         .width(Length::Fixed(canvas_width))
                         .height(Length::Fixed(canvas_height))
                         .content_fit(cosmic::iced::ContentFit::Contain),

@@ -1,11 +1,33 @@
+use std::borrow::Cow;
+use std::io::Cursor;
+
 use cosmic::iced::widget::image::Handle;
 use cosmic::iced::Task;
+use image::{DynamicImage, ImageFormat};
 
 use crate::app::AppModel;
 use crate::codecs;
 use crate::editor::{self, ResizeAlgorithm};
 use crate::message::{EditorMessage, Message};
 use crate::state::{DrawerMode, EditOperation};
+
+struct ClipboardPng(Vec<u8>);
+
+impl cosmic::iced::clipboard::mime::AsMimeTypes for ClipboardPng {
+    fn available(&self) -> Cow<'static, [String]> {
+        Cow::Owned(vec!["image/png".to_string()])
+    }
+
+    fn as_bytes(&self, mime_type: &str) -> Option<Cow<'static, [u8]>> {
+        (mime_type == "image/png").then(|| Cow::Owned(self.0.clone()))
+    }
+}
+
+fn clipboard_png(image: &DynamicImage) -> Result<ClipboardPng, image::ImageError> {
+    let mut bytes = Cursor::new(Vec::new());
+    image.write_to(&mut bytes, ImageFormat::Png)?;
+    Ok(ClipboardPng(bytes.into_inner()))
+}
 
 impl AppModel {
     pub(crate) fn clear_background_selection(&mut self) {
@@ -100,7 +122,19 @@ impl AppModel {
                     self.editor.crop_end,
                 ) {
                     if let Some(cropped) = editor::crop(image, first, second) {
+                        let clipboard = match clipboard_png(&cropped) {
+                            Ok(clipboard) => clipboard,
+                            Err(error) => {
+                                self.ui.error_message = Some(format!(
+                                    "No se pudo copiar el recorte al portapapeles: {error}"
+                                ));
+                                return Task::none();
+                            }
+                        };
                         self.apply_edit(cropped, EditOperation::Crop(first, second));
+                        self.ui.notification_message =
+                            Some("Recorte copiado al portapapeles".to_string());
+                        return cosmic::iced::clipboard::write_data(clipboard);
                     }
                 } else if self.viewer.original_image.is_none() {
                     self.ui.error_message =
@@ -272,5 +306,22 @@ impl AppModel {
             }
         }
         Task::none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cosmic::iced::clipboard::mime::AsMimeTypes;
+
+    #[test]
+    fn clipboard_crop_is_encoded_as_png() {
+        let image = DynamicImage::new_rgba8(3, 2);
+        let clipboard = clipboard_png(&image).unwrap();
+
+        assert_eq!(clipboard.available().as_ref(), &["image/png".to_string()]);
+        let bytes = clipboard.as_bytes("image/png").unwrap();
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+        assert!(clipboard.as_bytes("image/jpeg").is_none());
     }
 }

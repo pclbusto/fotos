@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use cosmic::iced::widget::image::Handle;
@@ -7,7 +7,7 @@ use cosmic::widget::about::About;
 use image::DynamicImage;
 
 use crate::browser::BrowserItem;
-use crate::viewer::{CachedImage, ImageMetadata, ZoomMode};
+use crate::viewer::{CachedImage, ImageMetadata, ZoomFilter, ZoomMode, ZoomRenderState};
 
 #[derive(Debug, Clone)]
 pub enum EditOperation {
@@ -70,8 +70,13 @@ pub struct BrowserState {
     pub focused_index: usize,
     pub layout: BrowserLayout,
     pub nav_model: cosmic::widget::nav_bar::Model,
-    pub nav_entities: HashMap<PathBuf, cosmic::widget::nav_bar::Id>,
     pub directory_generation: usize,
+    pub database: crate::database::ImageDatabase,
+    pub scanning: bool,
+    pub folder_tree: crate::browser::folders::FolderTree,
+    pub expanded_folders: HashSet<PathBuf>,
+    /// Carpeta sobre la que se abrió el menú contextual.
+    pub folder_context: Option<PathBuf>,
 }
 
 pub struct ViewerState {
@@ -86,6 +91,7 @@ pub struct ViewerState {
     pub zoom_mode: ZoomMode,
     pub opened_file_path: Option<PathBuf>,
     pub metadata: Option<ImageMetadata>,
+    pub zoom_render: ZoomRenderState,
 }
 
 pub struct EditorState {
@@ -109,6 +115,17 @@ pub struct EditorState {
 
 pub struct SettingsState {
     pub show_hidden: bool,
+    pub ignored_folders: crate::database::IgnoredFolders,
+    pub zoom_filter: ZoomFilter,
+    pub keymap: crate::keymap::Keymap,
+}
+
+/// Captura en curso de nuevas teclas para un atajo.
+#[derive(Debug, Clone)]
+pub struct ShortcutCapture {
+    pub action: crate::keymap::Action,
+    /// Primera tecla ya presionada; se espera la segunda.
+    pub first: Option<crate::keymap::Binding>,
 }
 
 pub struct UiState {
@@ -120,6 +137,8 @@ pub struct UiState {
     pub viewer_controls_hovered: bool,
     pub shortcuts_query: String,
     pub shortcuts_filter: usize,
+    pub shortcuts_editing: bool,
+    pub shortcut_capture: Option<ShortcutCapture>,
     pub error_message: Option<String>,
     pub notification_message: Option<String>,
     pub drawer_mode: Option<DrawerMode>,

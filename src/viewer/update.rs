@@ -13,6 +13,9 @@ impl AppModel {
         message: ViewerMessage,
     ) -> Task<cosmic::Action<Message>> {
         match message {
+            ViewerMessage::ZoomRenderReady(key, handle) => {
+                self.zoom_render_ready(key, handle);
+            }
             ViewerMessage::PanBy { x, y } => {
                 return cosmic::iced::widget::scrollable::scroll_by(
                     crate::viewer::scrollable_id(),

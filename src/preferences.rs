@@ -1,12 +1,14 @@
 use std::path::{Path, PathBuf};
 
 use crate::state::BrowserLayout;
+use crate::viewer::ZoomFilter;
 
 #[derive(Debug, Clone)]
 pub struct Preferences {
     pub layout: BrowserLayout,
     pub show_hidden: bool,
     pub last_directory: Option<PathBuf>,
+    pub zoom_filter: ZoomFilter,
 }
 
 impl Default for Preferences {
@@ -15,6 +17,7 @@ impl Default for Preferences {
             layout: BrowserLayout::Grid,
             show_hidden: false,
             last_directory: None,
+            zoom_filter: ZoomFilter::default(),
         }
     }
 }
@@ -46,6 +49,7 @@ impl Preferences {
                     };
                 }
                 "show_hidden" => preferences.show_hidden = value == "true",
+                "zoom_filter" => preferences.zoom_filter = ZoomFilter::from_key(value),
                 "last_directory" if !value.is_empty() => {
                     preferences.last_directory = Some(PathBuf::from(value));
                 }
@@ -59,6 +63,7 @@ impl Preferences {
         layout: BrowserLayout,
         show_hidden: bool,
         last_directory: &Path,
+        zoom_filter: ZoomFilter,
     ) -> std::io::Result<()> {
         let Some(path) = preferences_path() else {
             return Ok(());
@@ -72,7 +77,8 @@ impl Preferences {
             BrowserLayout::List => "list",
         };
         let contents = format!(
-            "layout={layout}\nshow_hidden={show_hidden}\nlast_directory={}\n",
+            "layout={layout}\nshow_hidden={show_hidden}\nzoom_filter={}\nlast_directory={}\n",
+            zoom_filter.key(),
             last_directory.to_string_lossy()
         );
         std::fs::write(path, contents)
@@ -89,11 +95,13 @@ mod tests {
 
     #[test]
     fn parses_persisted_preferences() {
-        let preferences =
-            Preferences::parse("layout=list\nshow_hidden=true\nlast_directory=/tmp/My Photos\n");
+        let preferences = Preferences::parse(
+            "layout=list\nshow_hidden=true\nzoom_filter=lanczos\nlast_directory=/tmp/My Photos\n",
+        );
 
         assert_eq!(preferences.layout, BrowserLayout::List);
         assert!(preferences.show_hidden);
+        assert_eq!(preferences.zoom_filter, ZoomFilter::Lanczos);
         assert_eq!(
             preferences.last_directory,
             Some(PathBuf::from("/tmp/My Photos"))

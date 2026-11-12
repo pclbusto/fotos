@@ -1,10 +1,12 @@
 use std::path::PathBuf;
 
+use cosmic::iced::keyboard::key::Physical;
 use cosmic::iced::keyboard::{Key, Modifiers};
 use cosmic::iced::widget::image::Handle;
 use image::DynamicImage;
 
 use crate::browser::BrowserItem;
+use crate::keymap::Action;
 use crate::state::BrowserLayout;
 use crate::viewer::{CachedImage, ImageMetadata, ZoomMode};
 
@@ -30,6 +32,18 @@ pub enum BrowserMessage {
     ItemClicked(usize),
     BackToBrowser,
     SetLayout(BrowserLayout),
+    StartScan,
+    ScanFinished(
+        Result<(crate::database::ImageDatabase, crate::database::ScanStats), String>,
+    ),
+    ToggleFolderExpanded(PathBuf),
+    /// Clic derecho sobre una carpeta: se recuerda antes de abrir el menú.
+    FolderContext(PathBuf),
+    /// Abrir una carpeta desde el panel; desde el visor vuelve al navegador.
+    OpenFolder(PathBuf),
+    FolderMenu(crate::browser::folders::FolderMenuAction),
+    UnignoreFolder(PathBuf),
+    DatabaseSaved(Result<(), String>),
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +63,7 @@ pub enum ViewerMessage {
     PreloadCompleted(Result<(PathBuf, CachedImage), (PathBuf, String)>),
     MetadataLoaded(PathBuf, ImageMetadata),
     PanBy { x: f32, y: f32 },
+    ZoomRenderReady(crate::viewer::zoom_filter::ResampleKey, Option<Handle>),
 }
 
 #[derive(Debug, Clone)]
@@ -88,10 +103,17 @@ pub enum UiMessage {
     ToggleShortcuts,
     ShortcutsQueryChanged(String),
     ShortcutsFilterSelected(usize),
+    ToggleShortcutsEditing,
+    StartShortcutCapture(Action),
+    CancelShortcutCapture,
+    ResetShortcuts,
+    RunAction(Action),
     ToggleSettings,
+    ToggleFolders,
     ToggleFullscreen,
     SetViewerControlsHovered(bool),
     ShowHiddenChanged(bool),
+    ZoomFilterChanged(usize),
     CloseDrawer,
     OpenUrl(String),
     ClearNotification,
@@ -102,7 +124,7 @@ pub enum UiMessage {
     ConfirmDelete,
     CancelDelete,
     CancelPendingAction,
-    KeyPress(Key, Modifiers),
+    KeyPress(Key, Physical, Modifiers),
 }
 
 impl From<BrowserMessage> for Message {

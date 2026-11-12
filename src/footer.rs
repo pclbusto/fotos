@@ -52,9 +52,8 @@ impl AppModel {
             )
             .width(Length::Fixed(32.0))
             .height(Length::Fixed(32.0))
-            .on_press(Message::Ui(UiMessage::KeyPress(
-                cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::ArrowLeft),
-                cosmic::iced::keyboard::Modifiers::default(),
+            .on_press(Message::Ui(UiMessage::RunAction(
+                crate::keymap::Action::PreviousImage,
             )))
             .tooltip("Anterior");
 
@@ -63,9 +62,8 @@ impl AppModel {
             )
             .width(Length::Fixed(32.0))
             .height(Length::Fixed(32.0))
-            .on_press(Message::Ui(UiMessage::KeyPress(
-                cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::ArrowRight),
-                cosmic::iced::keyboard::Modifiers::default(),
+            .on_press(Message::Ui(UiMessage::RunAction(
+                crate::keymap::Action::NextImage,
             )))
             .tooltip("Siguiente");
 

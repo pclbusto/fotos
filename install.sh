@@ -103,9 +103,25 @@ install_icons() {
 
     if [[ -n "$RESIZE_CMD" ]]; then
         echo "Generando e instalando iconos..."
-        for size in 32 48 64 128 256 512; do
+        for size in 16 24 32 48 64 128 256 512; do
             resized_icon="$TMP_DIR/$APP_ID-$size.png"
-            $RESIZE_CMD "$ICON_SOURCE" -resize "${size}x${size}" "$resized_icon"
+            # Los iconos deben ser cuadrados: se recortan los bordes transparentes,
+            # se escala en espacio lineal (evita halos oscuros en los bordes) y se
+            # centra sobre un lienzo transparente de size×size. A tamaños chicos se
+            # aplica un leve enfoque para que no quede borroso.
+            sharpen=()
+            if (( size <= 64 )); then
+                sharpen=(-unsharp 0x0.75+0.75+0.008)
+            fi
+            $RESIZE_CMD "$ICON_SOURCE" \
+                -trim +repage \
+                -colorspace RGB \
+                -filter Lanczos -resize "${size}x${size}" \
+                -colorspace sRGB \
+                "${sharpen[@]}" \
+                -background none -gravity center -extent "${size}x${size}" \
+                -strip \
+                "PNG32:$resized_icon"
 
             install -Dm644 \
                 "$resized_icon" \
