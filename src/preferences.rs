@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use crate::browser::sort::{SortKey, SortOrder};
 use crate::state::BrowserLayout;
 use crate::viewer::ZoomFilter;
 
@@ -9,6 +10,7 @@ pub struct Preferences {
     pub show_hidden: bool,
     pub last_directory: Option<PathBuf>,
     pub zoom_filter: ZoomFilter,
+    pub sort: SortOrder,
 }
 
 impl Default for Preferences {
@@ -18,6 +20,7 @@ impl Default for Preferences {
             show_hidden: false,
             last_directory: None,
             zoom_filter: ZoomFilter::default(),
+            sort: SortOrder::default(),
         }
     }
 }
@@ -50,6 +53,8 @@ impl Preferences {
                 }
                 "show_hidden" => preferences.show_hidden = value == "true",
                 "zoom_filter" => preferences.zoom_filter = ZoomFilter::from_key(value),
+                "sort_by" => preferences.sort.key = SortKey::from_key(value),
+                "sort_descending" => preferences.sort.descending = value == "true",
                 "last_directory" if !value.is_empty() => {
                     preferences.last_directory = Some(PathBuf::from(value));
                 }
@@ -64,6 +69,7 @@ impl Preferences {
         show_hidden: bool,
         last_directory: &Path,
         zoom_filter: ZoomFilter,
+        sort: SortOrder,
     ) -> std::io::Result<()> {
         let Some(path) = preferences_path() else {
             return Ok(());
@@ -77,8 +83,10 @@ impl Preferences {
             BrowserLayout::List => "list",
         };
         let contents = format!(
-            "layout={layout}\nshow_hidden={show_hidden}\nzoom_filter={}\nlast_directory={}\n",
+            "layout={layout}\nshow_hidden={show_hidden}\nzoom_filter={}\nsort_by={}\nsort_descending={}\nlast_directory={}\n",
             zoom_filter.key(),
+            sort.key.key(),
+            sort.descending,
             last_directory.to_string_lossy()
         );
         std::fs::write(path, contents)
@@ -96,12 +104,19 @@ mod tests {
     #[test]
     fn parses_persisted_preferences() {
         let preferences = Preferences::parse(
-            "layout=list\nshow_hidden=true\nzoom_filter=lanczos\nlast_directory=/tmp/My Photos\n",
+            "layout=list\nshow_hidden=true\nzoom_filter=lanczos\nsort_by=modified\nsort_descending=true\nlast_directory=/tmp/My Photos\n",
         );
 
         assert_eq!(preferences.layout, BrowserLayout::List);
         assert!(preferences.show_hidden);
         assert_eq!(preferences.zoom_filter, ZoomFilter::Lanczos);
+        assert_eq!(
+            preferences.sort,
+            SortOrder {
+                key: SortKey::Modified,
+                descending: true
+            }
+        );
         assert_eq!(
             preferences.last_directory,
             Some(PathBuf::from("/tmp/My Photos"))

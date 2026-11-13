@@ -45,6 +45,10 @@ impl AppModel {
             );
         }
 
+        if let Some(dialog) = self.rename_dialog() {
+            return Some(dialog);
+        }
+
         self.ui.pending_action.as_ref()?;
         Some(
             cosmic::widget::dialog()

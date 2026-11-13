@@ -2,7 +2,7 @@ use cosmic::iced::Task;
 use cosmic::Application as _;
 
 use crate::app::AppModel;
-use crate::message::{BrowserMessage, Message, UiMessage};
+use crate::message::{BrowserMessage, Message, UiMessage, ViewerMessage};
 use crate::shortcuts_panel;
 use crate::state::{DrawerMode, PendingAction, PendingDelete};
 
@@ -187,6 +187,31 @@ impl AppModel {
                 ]);
             }
             UiMessage::CancelDelete => self.ui.pending_delete = None,
+            UiMessage::RenameSelection => {
+                let selection = match self.ui.view_mode {
+                    crate::state::ViewMode::Browser => self
+                        .browser
+                        .items
+                        .get(self.browser.focused_index)
+                        .map(|item| item.path().to_path_buf()),
+                    crate::state::ViewMode::Viewer => self.viewer.opened_file_path.clone(),
+                };
+                if let Some(path) = selection {
+                    let name = path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    self.ui.pending_rename = Some(crate::state::PendingRename { path, name });
+                    return cosmic::widget::text_input::focus(crate::rename::input_id());
+                }
+            }
+            UiMessage::RenameInputChanged(name) => {
+                if let Some(rename) = self.ui.pending_rename.as_mut() {
+                    rename.name = name;
+                }
+            }
+            UiMessage::ConfirmRename => return self.confirm_rename(),
+            UiMessage::CancelRename => self.ui.pending_rename = None,
             UiMessage::CancelPendingAction => self.ui.pending_action = None,
             UiMessage::ShowHiddenChanged(show) => {
                 self.settings.show_hidden = show;
@@ -212,7 +237,19 @@ impl AppModel {
             UiMessage::ClearNotification => self.ui.notification_message = None,
             UiMessage::ClearError => self.ui.error_message = None,
             UiMessage::DiscardChanges => {
+                let discard_crop_in_viewer = matches!(
+                    self.ui.pending_action.as_ref(),
+                    Some(PendingAction::BackToBrowser)
+                ) && matches!(
+                    self.editor.history.last(),
+                    Some(crate::state::EditOperation::Crop(..))
+                        | Some(crate::state::EditOperation::MultiCrop(..))
+                );
                 self.editor.dirty = false;
+                if discard_crop_in_viewer {
+                    self.ui.pending_action = None;
+                    return self.update(Message::Viewer(ViewerMessage::ResetImage));
+                }
                 return self.continue_pending_action();
             }
             UiMessage::RequestExit => {

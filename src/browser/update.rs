@@ -21,8 +21,9 @@ impl AppModel {
                     .unwrap_or_else(|| path.to_string_lossy().into_owned());
                 self.core.set_header_title(title);
                 let show_hidden = self.settings.show_hidden;
+                let order = self.browser.sort;
                 Task::perform(
-                    async move { io::load_directory(path, show_hidden) },
+                    async move { io::load_directory(path, show_hidden, order) },
                     |result| {
                         cosmic::Action::App(Message::Browser(BrowserMessage::DirectoryLoaded(
                             result,
@@ -84,15 +85,22 @@ impl AppModel {
                 generation,
             } => {
                 if generation == self.browser.directory_generation {
-                    if let Some(BrowserItem::Image {
-                        path: item_path,
-                        thumbnail,
-                        ..
-                    }) = self.browser.items.get_mut(index)
+                    // Si se reordenó mientras cargaba, el índice ya no coincide:
+                    // se busca el elemento por su ruta.
+                    let position = if self
+                        .browser
+                        .items
+                        .get(index)
+                        .is_some_and(|item| item.path() == path)
                     {
-                        if *item_path == path {
-                            *thumbnail = handle;
-                        }
+                        Some(index)
+                    } else {
+                        self.browser.items.iter().position(|item| item.path() == path)
+                    };
+                    if let Some(BrowserItem::Image { thumbnail, .. }) =
+                        position.and_then(|position| self.browser.items.get_mut(position))
+                    {
+                        *thumbnail = handle;
                     }
                 }
                 Task::none()
@@ -196,6 +204,24 @@ impl AppModel {
             BrowserMessage::DatabaseSaved(result) => {
                 if let Err(error) = result {
                     self.ui.error_message = Some(error);
+                }
+                Task::none()
+            }
+            BrowserMessage::SetSort(order) => {
+                if self.browser.sort != order {
+                    self.browser.sort = order;
+                    self.save_preferences();
+                    let focused = self
+                        .browser
+                        .items
+                        .get(self.browser.focused_index)
+                        .map(|item| item.path().to_path_buf());
+                    super::sort::sort_items(&mut self.browser.items, order);
+                    self.browser.focused_index = focused
+                        .and_then(|focused| {
+                            self.browser.items.iter().position(|item| item.path() == focused)
+                        })
+                        .unwrap_or(0);
                 }
                 Task::none()
             }

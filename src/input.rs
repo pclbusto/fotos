@@ -4,8 +4,8 @@ use cosmic::iced::Task;
 use cosmic::Application as _;
 
 use crate::app::AppModel;
-use crate::message::{BrowserMessage, EditorMessage, Message, UiMessage, ViewerMessage};
 use crate::keymap::{Action, Binding};
+use crate::message::{BrowserMessage, EditorMessage, Message, UiMessage, ViewerMessage};
 use crate::state::{PendingAction, ShortcutCapture, ViewMode};
 
 impl AppModel {
@@ -20,8 +20,15 @@ impl AppModel {
         if self.ui.pending_delete.is_some() {
             return self.update(Message::Ui(UiMessage::CancelDelete));
         }
+        if self.ui.pending_rename.is_some() {
+            return self.update(Message::Ui(UiMessage::CancelRename));
+        }
         if self.ui.pending_action.is_some() {
             return self.update(Message::Ui(UiMessage::CancelPendingAction));
+        }
+        // Cancelar una herramienta nunca debe sacar al usuario del visor.
+        if self.editor.cropping {
+            return self.update(Message::Editor(EditorMessage::CancelCrop));
         }
         if self.core.window.show_context {
             return self.update(Message::Ui(UiMessage::CloseDrawer));
@@ -35,9 +42,6 @@ impl AppModel {
         if self.editor.selecting_background {
             self.clear_background_selection();
             return Task::none();
-        }
-        if self.editor.cropping {
-            return self.update(Message::Editor(EditorMessage::ToggleCropMode));
         }
         if self.ui.view_mode == ViewMode::Viewer {
             return self.update(Message::Browser(BrowserMessage::BackToBrowser));
@@ -81,6 +85,18 @@ impl AppModel {
                     };
                     self.commit_shortcut(capture.action, bindings);
                 }
+            }
+            return Task::none();
+        }
+
+        if self.editor.cropping && matches!(&key, Key::Named(Named::Enter)) {
+            let has_selection = if self.editor.multi_crop {
+                !self.editor.crop_regions.is_empty()
+            } else {
+                self.editor.crop_start.is_some() && self.editor.crop_end.is_some()
+            };
+            if has_selection {
+                return self.update(Message::Editor(EditorMessage::ConfirmCrop));
             }
             return Task::none();
         }
@@ -139,10 +155,8 @@ impl AppModel {
         let displaced = self.settings.keymap.assign(action, bindings);
         if !displaced.is_empty() {
             let names: Vec<&str> = displaced.iter().map(|action| action.name()).collect();
-            self.ui.notification_message = Some(format!(
-                "La tecla se quitó de: {}",
-                names.join(", ")
-            ));
+            self.ui.notification_message =
+                Some(format!("La tecla se quitó de: {}", names.join(", ")));
         }
         if let Err(error) = self.settings.keymap.save() {
             self.ui.error_message = Some(format!("No se pudieron guardar los atajos: {error}"));
@@ -154,6 +168,8 @@ impl AppModel {
         match action {
             Action::OpenFile
             | Action::Undo
+            | Action::Crop
+            | Action::MultiCrop
             | Action::ToggleMetadata
             | Action::ZoomIn
             | Action::ZoomOut
@@ -165,6 +181,7 @@ impl AppModel {
             Action::Quit
             | Action::Trash
             | Action::DeletePermanent
+            | Action::Rename
             | Action::Fullscreen
             | Action::About
             | Action::Folders
@@ -181,8 +198,11 @@ impl AppModel {
             Action::SaveCopy => Message::Viewer(ViewerMessage::SaveCopy),
             Action::Quit => Message::Ui(UiMessage::RequestExit),
             Action::Undo => Message::Editor(EditorMessage::Undo),
+            Action::Crop => Message::Editor(EditorMessage::StartCrop { multiple: false }),
+            Action::MultiCrop => Message::Editor(EditorMessage::StartCrop { multiple: true }),
             Action::Trash => Message::Ui(UiMessage::DeleteSelection { permanent: false }),
             Action::DeletePermanent => Message::Ui(UiMessage::DeleteSelection { permanent: true }),
+            Action::Rename => Message::Ui(UiMessage::RenameSelection),
             Action::GridView => {
                 Message::Browser(BrowserMessage::SetLayout(crate::state::BrowserLayout::Grid))
             }

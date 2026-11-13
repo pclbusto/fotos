@@ -36,6 +36,12 @@ const FIXED_SHORTCUTS: &[FixedShortcut] = &[
         category: Category::Edit,
     },
     FixedShortcut {
+        keys: &["Intro"],
+        name: "Aplicar recorte",
+        description: "Confirma las selecciones del recorte actual",
+        category: Category::Edit,
+    },
+    FixedShortcut {
         keys: &["Esc"],
         name: "Cerrar o cancelar",
         description: "Cierra cualquier panel, diálogo o herramienta abierta",

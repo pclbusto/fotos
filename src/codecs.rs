@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use image::metadata::Orientation;
 use image::{DynamicImage, ImageDecoder, ImageError, ImageReader};
@@ -36,6 +36,19 @@ pub fn save(image: &DynamicImage, path: &Path) -> Result<(), ImageError> {
     image.save(path)
 }
 
+/// Agrega una extensión predeterminada cuando el usuario escribió sólo el
+/// nombre del archivo. Una extensión vacía (`foto.`) se trata del mismo modo.
+pub fn with_default_extension(mut path: PathBuf, extension: &str) -> PathBuf {
+    let has_extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| !value.is_empty());
+    if !has_extension {
+        path.set_extension(extension);
+    }
+    path
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -45,5 +58,21 @@ mod tests {
         assert!(supports(Path::new("photo.JPEG")));
         assert!(supports(Path::new("photo.webp")));
         assert!(!supports(Path::new("notes.txt")));
+    }
+
+    #[test]
+    fn adds_default_extension_only_when_missing() {
+        assert_eq!(
+            with_default_extension(PathBuf::from("foto"), "png"),
+            PathBuf::from("foto.png")
+        );
+        assert_eq!(
+            with_default_extension(PathBuf::from("foto."), "png"),
+            PathBuf::from("foto.png")
+        );
+        assert_eq!(
+            with_default_extension(PathBuf::from("foto.jpg"), "png"),
+            PathBuf::from("foto.jpg")
+        );
     }
 }

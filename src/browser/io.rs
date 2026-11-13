@@ -29,7 +29,11 @@ pub fn pictures_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
 }
 
-pub fn load_directory(dir: PathBuf, show_hidden: bool) -> Result<Vec<BrowserItem>, String> {
+pub fn load_directory(
+    dir: PathBuf,
+    show_hidden: bool,
+    order: super::sort::SortOrder,
+) -> Result<Vec<BrowserItem>, String> {
     let mut items = Vec::new();
 
     let entries = std::fs::read_dir(&dir).map_err(|error| error.to_string())?;
@@ -42,19 +46,22 @@ pub fn load_directory(dir: PathBuf, show_hidden: bool) -> Result<Vec<BrowserItem
             continue;
         }
         if path.is_file() && codecs::supports(&path) {
-            let file_size = entry.metadata().ok().map(|metadata| metadata.len());
+            let metadata = entry.metadata().ok();
+            let file_size = metadata.as_ref().map(|metadata| metadata.len());
+            let modified = metadata.and_then(|metadata| metadata.modified().ok());
             items.push(BrowserItem::Image {
                 name,
                 path,
                 folder: dir.clone(),
                 file_size,
+                modified,
                 tags: Vec::new(),
                 thumbnail: None,
             });
         }
     }
 
-    items.sort_by_key(|item| item.name().to_lowercase());
+    super::sort::sort_items(&mut items, order);
     Ok(items)
 }
 

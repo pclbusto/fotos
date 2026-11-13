@@ -1,8 +1,10 @@
 use cosmic::iced::widget::image::Handle;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 pub mod folders;
 pub mod io;
+pub mod sort;
 pub mod thumbnails;
 pub mod update;
 pub mod view;
@@ -14,6 +16,7 @@ pub enum BrowserItem {
         path: PathBuf,
         folder: PathBuf,
         file_size: Option<u64>,
+        modified: Option<SystemTime>,
         tags: Vec<String>,
         thumbnail: Option<Handle>,
     },
@@ -35,6 +38,18 @@ impl BrowserItem {
     pub fn folder(&self) -> &Path {
         match self {
             BrowserItem::Image { folder, .. } => folder,
+        }
+    }
+
+    pub fn file_size(&self) -> Option<u64> {
+        match self {
+            BrowserItem::Image { file_size, .. } => *file_size,
+        }
+    }
+
+    pub fn modified(&self) -> Option<SystemTime> {
+        match self {
+            BrowserItem::Image { modified, .. } => *modified,
         }
     }
 

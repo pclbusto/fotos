@@ -13,6 +13,7 @@ pub struct ImageCanvasProgram {
     pub is_selecting_background: bool,
     pub crop_start: Option<Point>,
     pub crop_end: Option<Point>,
+    pub crop_regions: Vec<(Point, Point)>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -114,8 +115,10 @@ impl Program<Message, cosmic::theme::Theme, cosmic::iced::Renderer> for ImageCan
                 state.drag_start = None;
                 if !self.is_cropping_mode {
                     return Some(
-                        canvas::Action::publish(Message::Editor(EditorMessage::ToggleCropMode))
-                            .and_capture(),
+                        canvas::Action::publish(Message::Editor(EditorMessage::StartCrop {
+                            multiple: false,
+                        }))
+                        .and_capture(),
                     );
                 }
                 return Some(canvas::Action::capture());
@@ -191,7 +194,10 @@ impl Program<Message, cosmic::theme::Theme, cosmic::iced::Renderer> for ImageCan
                         }
                         return Some(canvas::Action::capture());
                     }
-                    return Some(canvas::Action::capture());
+                    return Some(
+                        canvas::Action::publish(Message::Viewer(ViewerMessage::PanStart))
+                            .and_capture(),
+                    );
                 }
             }
             canvas::Event::Mouse(mouse::Event::CursorMoved { .. }) => {
@@ -252,17 +258,10 @@ impl Program<Message, cosmic::theme::Theme, cosmic::iced::Renderer> for ImageCan
                                     .and_capture(),
                                 );
                             }
-                        } else if let Some(previous) = state.drag_start.replace(pos) {
-                            let x = previous.x - pos.x;
-                            let y = previous.y - pos.y;
-                            if x != 0.0 || y != 0.0 {
-                                return Some(
-                                    canvas::Action::publish(Message::Viewer(
-                                        ViewerMessage::PanBy { x, y },
-                                    ))
-                                    .and_capture(),
-                                );
-                            }
+                        } else {
+                            // El desplazamiento lo calcula la suscripción global con
+                            // coordenadas de ventana (ver `ViewerMessage::PanMove`).
+                            return Some(canvas::Action::capture());
                         }
                     }
                 }
@@ -339,6 +338,28 @@ impl Program<Message, cosmic::theme::Theme, cosmic::iced::Renderer> for ImageCan
                 .zip(self.crop_end)
                 .map(|app_crop| state.visual_crop.unwrap_or(app_crop));
             if self.is_cropping_mode {
+                for (start, end) in &self.crop_regions {
+                    let p1 = self.image_to_canvas(*start, canvas_size);
+                    let p2 = self.image_to_canvas(*end, canvas_size);
+                    let min_x = p1.x.min(p2.x).clamp(rendered_x, rendered_x + rendered_w);
+                    let max_x = p1.x.max(p2.x).clamp(rendered_x, rendered_x + rendered_w);
+                    let min_y = p1.y.min(p2.y).clamp(rendered_y, rendered_y + rendered_h);
+                    let max_y = p1.y.max(p2.y).clamp(rendered_y, rendered_y + rendered_h);
+                    let rect = Rectangle::new(
+                        Point::new(min_x, min_y),
+                        Size::new(max_x - min_x, max_y - min_y),
+                    );
+                    if rect.width > 0.0 && rect.height > 0.0 {
+                        let path = CanvasPath::rectangle(rect.position(), rect.size());
+                        frame.fill(&path, Color::from_rgba(0.0, 0.0, 0.0, 0.12));
+                        frame.stroke(
+                            &path,
+                            canvas::Stroke::default()
+                                .with_color(selection_color)
+                                .with_width(3.0),
+                        );
+                    }
+                }
                 if let Some((c_start, c_end)) = crop {
                     let p1 = self.image_to_canvas(c_start, canvas_size);
                     let p2 = self.image_to_canvas(c_end, canvas_size);

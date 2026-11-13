@@ -7,6 +7,7 @@ use cosmic::Application as _;
 use cosmic::Element;
 
 use crate::app::AppModel;
+use crate::browser::sort::{SortKey, SortOrder};
 use crate::message::{BrowserMessage, EditorMessage, Message, UiMessage, ViewerMessage};
 use crate::state::{BrowserLayout, ViewMode};
 
@@ -24,6 +25,7 @@ enum HeaderAction {
     Shortcuts,
     Settings,
     About,
+    Sort(SortOrder),
 }
 
 impl menu::Action for HeaderAction {
@@ -33,7 +35,7 @@ impl menu::Action for HeaderAction {
         match self {
             Self::Open => Message::Viewer(ViewerMessage::OpenFile),
             Self::SaveCopy => Message::Viewer(ViewerMessage::SaveCopy),
-            Self::Crop => Message::Editor(EditorMessage::ToggleCropMode),
+            Self::Crop => Message::Editor(EditorMessage::StartCrop { multiple: false }),
             Self::Transform => Message::Editor(EditorMessage::ToggleTransform),
             Self::Undo => Message::Editor(EditorMessage::Undo),
             Self::Reset => Message::Viewer(ViewerMessage::ResetImage),
@@ -43,6 +45,7 @@ impl menu::Action for HeaderAction {
             Self::Shortcuts => Message::Ui(UiMessage::ToggleShortcuts),
             Self::Settings => Message::Ui(UiMessage::ToggleSettings),
             Self::About => Message::Ui(UiMessage::ToggleAbout),
+            Self::Sort(order) => Message::Browser(BrowserMessage::SetSort(*order)),
         }
     }
 }
@@ -112,6 +115,7 @@ impl AppModel {
                 .into();
 
         vec![
+            self.browser_sort_menu(),
             grid,
             list,
             header_button(
@@ -126,6 +130,45 @@ impl AppModel {
                 UiMessage::ToggleSettings,
             ),
         ]
+    }
+
+    fn browser_sort_menu(&self) -> Element<'_, Message> {
+        let current = self.browser.sort;
+        let key_item = |label: &'static str, key: SortKey| {
+            menu::Item::CheckBox(
+                label,
+                None,
+                current.key == key,
+                HeaderAction::Sort(SortOrder { key, ..current }),
+            )
+        };
+        let direction_item = |label: &'static str, descending: bool| {
+            menu::Item::CheckBox(
+                label,
+                None,
+                current.descending == descending,
+                HeaderAction::Sort(SortOrder {
+                    descending,
+                    ..current
+                }),
+            )
+        };
+        let items = vec![
+            key_item("Nombre", SortKey::Name),
+            key_item("Fecha de modificación", SortKey::Modified),
+            key_item("Tamaño", SortKey::Size),
+            menu::Item::Divider,
+            direction_item("Ascendente", false),
+            direction_item("Descendente", true),
+        ];
+
+        cosmic::widget::responsive_menu_bar().into_element(
+            self.core(),
+            menu_keybinds(),
+            cosmic::widget::Id::new("browser-sort-menu"),
+            Message::Surface,
+            vec![("Ordenar", items)],
+        )
     }
 
     fn viewer_responsive_menu(&self) -> Element<'_, Message> {

@@ -32,10 +32,9 @@ pub enum BrowserMessage {
     ItemClicked(usize),
     BackToBrowser,
     SetLayout(BrowserLayout),
+    SetSort(crate::browser::sort::SortOrder),
     StartScan,
-    ScanFinished(
-        Result<(crate::database::ImageDatabase, crate::database::ScanStats), String>,
-    ),
+    ScanFinished(Result<(crate::database::ImageDatabase, crate::database::ScanStats), String>),
     ToggleFolderExpanded(PathBuf),
     /// Clic derecho sobre una carpeta: se recuerda antes de abrir el menú.
     FolderContext(PathBuf),
@@ -62,13 +61,19 @@ pub enum ViewerMessage {
     ActiveImageLoaded(Result<(PathBuf, DynamicImage), String>),
     PreloadCompleted(Result<(PathBuf, CachedImage), (PathBuf, String)>),
     MetadataLoaded(PathBuf, ImageMetadata),
-    PanBy { x: f32, y: f32 },
+    PanStart,
+    PanMove(cosmic::iced::Point),
+    PanEnd,
+    Scrolled(cosmic::iced::widget::scrollable::AbsoluteOffset),
     ZoomRenderReady(crate::viewer::zoom_filter::ResampleKey, Option<Handle>),
 }
 
 #[derive(Debug, Clone)]
 pub enum EditorMessage {
-    ToggleCropMode,
+    StartCrop {
+        multiple: bool,
+    },
+    CancelCrop,
     CropStart(cosmic::iced::Point),
     CropUpdate(cosmic::iced::Point),
     CropEnd(cosmic::iced::Point),
@@ -123,6 +128,10 @@ pub enum UiMessage {
     DeleteSelection { permanent: bool },
     ConfirmDelete,
     CancelDelete,
+    RenameSelection,
+    RenameInputChanged(String),
+    ConfirmRename,
+    CancelRename,
     CancelPendingAction,
     KeyPress(Key, Physical, Modifiers),
 }

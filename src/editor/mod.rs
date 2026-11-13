@@ -61,30 +61,52 @@ pub fn flip_vertical(image: &DynamicImage) -> DynamicImage {
     image.flipv()
 }
 
-pub fn crop(image: &DynamicImage, first: Point, second: Point) -> Option<DynamicImage> {
-    let x0 = first
-        .x
-        .min(second.x)
-        .floor()
-        .clamp(0.0, image.width() as f32) as u32;
+pub(crate) fn crop_rect(
+    first: Point,
+    second: Point,
+    image_width: u32,
+    image_height: u32,
+) -> Option<(u32, u32, u32, u32)> {
+    let x0 = first.x.min(second.x).floor().clamp(0.0, image_width as f32) as u32;
     let y0 = first
         .y
         .min(second.y)
         .floor()
-        .clamp(0.0, image.height() as f32) as u32;
-    let x1 = first
-        .x
-        .max(second.x)
-        .ceil()
-        .clamp(0.0, image.width() as f32) as u32;
-    let y1 = first
-        .y
-        .max(second.y)
-        .ceil()
-        .clamp(0.0, image.height() as f32) as u32;
+        .clamp(0.0, image_height as f32) as u32;
+    let x1 = first.x.max(second.x).ceil().clamp(0.0, image_width as f32) as u32;
+    let y1 = first.y.max(second.y).ceil().clamp(0.0, image_height as f32) as u32;
     let width = x1.saturating_sub(x0);
     let height = y1.saturating_sub(y0);
-    (width > 0 && height > 0).then(|| image.crop_imm(x0, y0, width, height))
+    (width > 0 && height > 0).then_some((x0, y0, width, height))
+}
+
+pub fn crop(image: &DynamicImage, first: Point, second: Point) -> Option<DynamicImage> {
+    let (x, y, width, height) = crop_rect(first, second, image.width(), image.height())?;
+    Some(image.crop_imm(x, y, width, height))
+}
+
+/// Combina varias regiones conservando su posición relativa. Las zonas no
+/// seleccionadas quedan transparentes dentro del rectángulo envolvente.
+pub fn crop_multiple(image: &DynamicImage, regions: &[(Point, Point)]) -> Option<DynamicImage> {
+    let rects: Vec<_> = regions
+        .iter()
+        .filter_map(|(first, second)| crop_rect(*first, *second, image.width(), image.height()))
+        .collect();
+    let min_x = rects.iter().map(|rect| rect.0).min()?;
+    let min_y = rects.iter().map(|rect| rect.1).min()?;
+    let max_x = rects.iter().map(|rect| rect.0 + rect.2).max()?;
+    let max_y = rects.iter().map(|rect| rect.1 + rect.3).max()?;
+    let mut output = image::RgbaImage::new(max_x - min_x, max_y - min_y);
+    for (x, y, width, height) in rects {
+        let fragment = image.crop_imm(x, y, width, height).to_rgba8();
+        image::imageops::overlay(
+            &mut output,
+            &fragment,
+            i64::from(x - min_x),
+            i64::from(y - min_y),
+        );
+    }
+    Some(DynamicImage::ImageRgba8(output))
 }
 
 pub fn resize(image: &DynamicImage, factor: f32, algorithm: ResizeAlgorithm) -> DynamicImage {
@@ -112,6 +134,7 @@ pub fn replay(mut image: DynamicImage, operations: &[EditOperation]) -> DynamicI
     for operation in operations {
         image = match operation {
             EditOperation::Crop(first, second) => crop(&image, *first, *second).unwrap_or(image),
+            EditOperation::MultiCrop(regions) => crop_multiple(&image, regions).unwrap_or(image),
             EditOperation::RotateClockwise => rotate_clockwise(&image),
             EditOperation::RotateCounterclockwise => rotate_counterclockwise(&image),
             EditOperation::FlipHorizontal => flip_horizontal(&image),
@@ -146,6 +169,28 @@ mod tests {
         let image = DynamicImage::new_rgba8(100, 80);
         let cropped = crop(&image, Point::new(-20.0, -10.0), Point::new(150.0, 100.0)).unwrap();
         assert_eq!((cropped.width(), cropped.height()), (100, 80));
+    }
+
+    #[test]
+    fn multiple_crop_preserves_relative_positions_and_transparency() {
+        let mut source = image::RgbaImage::from_pixel(6, 4, image::Rgba([20, 30, 40, 255]));
+        source.put_pixel(0, 0, image::Rgba([255, 0, 0, 255]));
+        source.put_pixel(5, 3, image::Rgba([0, 0, 255, 255]));
+        let image = DynamicImage::ImageRgba8(source);
+        let result = crop_multiple(
+            &image,
+            &[
+                (Point::new(0.0, 0.0), Point::new(2.0, 2.0)),
+                (Point::new(4.0, 2.0), Point::new(6.0, 4.0)),
+            ],
+        )
+        .unwrap()
+        .to_rgba8();
+
+        assert_eq!(result.dimensions(), (6, 4));
+        assert_eq!(result.get_pixel(0, 0), &image::Rgba([255, 0, 0, 255]));
+        assert_eq!(result.get_pixel(5, 3), &image::Rgba([0, 0, 255, 255]));
+        assert_eq!(result.get_pixel(3, 1).0[3], 0);
     }
 
     #[test]

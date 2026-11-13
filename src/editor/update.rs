@@ -98,24 +98,76 @@ impl AppModel {
         message: EditorMessage,
     ) -> Task<cosmic::Action<Message>> {
         match message {
-            EditorMessage::ToggleCropMode => {
-                self.editor.cropping = !self.editor.cropping;
+            EditorMessage::StartCrop { multiple } => {
+                self.clear_scale_preview();
+                self.editor.cropping = self.viewer.original_image.is_some();
+                self.editor.multi_crop = multiple;
+                self.editor.crop_regions.clear();
                 self.clear_background_selection();
                 self.editor.crop_start = None;
                 self.editor.crop_end = None;
+                return self.restore_viewer_scroll();
+            }
+            EditorMessage::CancelCrop => {
+                self.editor.cropping = false;
+                self.editor.multi_crop = false;
+                self.editor.crop_regions.clear();
+                self.editor.crop_start = None;
+                self.editor.crop_end = None;
+                return self.restore_viewer_scroll();
             }
             EditorMessage::CropStart(point) => {
                 self.editor.crop_start = Some(point);
                 self.editor.crop_end = Some(point);
             }
-            EditorMessage::CropUpdate(point) | EditorMessage::CropEnd(point) => {
+            EditorMessage::CropUpdate(point) => {
                 self.editor.crop_end = Some(point);
+            }
+            EditorMessage::CropEnd(point) => {
+                self.editor.crop_end = Some(point);
+                if self.editor.multi_crop {
+                    if let Some(start) = self.editor.crop_start {
+                        if editor::crop_rect(
+                            start,
+                            point,
+                            self.viewer.image_width as u32,
+                            self.viewer.image_height as u32,
+                        )
+                        .is_some()
+                        {
+                            self.editor.crop_regions.push((start, point));
+                        }
+                    }
+                    self.editor.crop_start = None;
+                    self.editor.crop_end = None;
+                }
             }
             EditorMessage::SetCrop(start, end) => {
                 self.editor.crop_start = Some(start);
                 self.editor.crop_end = Some(end);
             }
             EditorMessage::ConfirmCrop => {
+                if self.editor.multi_crop {
+                    if let Some(image) = self.viewer.original_image.as_ref() {
+                        let regions = self.editor.crop_regions.clone();
+                        if let Some(cropped) = editor::crop_multiple(image, &regions) {
+                            let clipboard = match clipboard_png(&cropped) {
+                                Ok(clipboard) => clipboard,
+                                Err(error) => {
+                                    self.ui.error_message = Some(format!(
+                                        "No se pudo copiar el recorte al portapapeles: {error}"
+                                    ));
+                                    return Task::none();
+                                }
+                            };
+                            self.apply_edit(cropped, EditOperation::MultiCrop(regions));
+                            self.ui.notification_message =
+                                Some("Recortes combinados y copiados al portapapeles".to_string());
+                            return cosmic::iced::clipboard::write_data(clipboard);
+                        }
+                    }
+                    return Task::none();
+                }
                 if let (Some(image), Some(first), Some(second)) = (
                     self.viewer.original_image.as_ref(),
                     self.editor.crop_start,
@@ -209,6 +261,8 @@ impl AppModel {
                     !self.editor.selecting_background && self.viewer.original_image.is_some();
                 if self.editor.selecting_background {
                     self.editor.cropping = false;
+                    self.editor.multi_crop = false;
+                    self.editor.crop_regions.clear();
                     self.editor.crop_start = None;
                     self.editor.crop_end = None;
                 }

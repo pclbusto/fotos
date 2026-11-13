@@ -7,11 +7,14 @@ una imagen o carpeta recibida desde la línea de comandos.
 ## Funciones
 
 - Navegación de carpetas con vistas de grilla y lista, miniaturas y archivos ocultos opcionales.
+- Orden por nombre natural (`img2` antes que `img10`), fecha de modificación o tamaño, ascendente o descendente.
+- Cambio de nombre de imágenes con `F2` desde el navegador o el visor.
 - Visualización de PNG, JPEG, BMP, WebP, TIFF/TIF y el primer cuadro de GIF.
 - Navegación entre las imágenes de una carpeta con botones o flechas del teclado.
 - Zoom ajustado a ventana, ajustado al ancho, tamaño real y zoom manual.
 - Zoom con `Ctrl` + rueda del mouse en pasos de 5 %.
 - Recorte interactivo, rotación, reflejo y escalado con distintos filtros.
+- Recorte múltiple que combina varias regiones conservando su posición relativa.
 - Historial de transformaciones con varios pasos de deshacer mediante el menú o `Ctrl+Z`.
 - Restablecer una imagen modificada desde su archivo original.
 - Guardar una copia o sobrescribir después de confirmar cambios pendientes.
@@ -68,6 +71,9 @@ cargo run --release -- /ruta/a/imagenes
 | `Ctrl` + rueda | Cambiar zoom |
 | Arrastrar con botón izquierdo | Desplazar una imagen ampliada |
 | Botón central | Activar la herramienta de recorte |
+| `Ctrl+R` | Activar el recorte |
+| `Ctrl+Mayús+R` | Activar el recorte múltiple |
+| `Enter` | Aplicar el recorte y sus selecciones |
 | `Ctrl+O` | Abrir imagen |
 | `Ctrl+S` | Guardar copia |
 | `Ctrl+Z` | Deshacer última transformación |
@@ -78,6 +84,7 @@ cargo run --release -- /ruta/a/imagenes
 | `Ctrl+W` / `Ctrl+Q` | Cerrar Fotos |
 | `Delete` | Mover la selección a la papelera |
 | `Ctrl+Delete` | Eliminar permanentemente |
+| `F2` | Cambiar el nombre de la imagen |
 | `F11` | Activar o salir de pantalla completa |
 | `Esc` | Cerrar el panel, diálogo o herramienta abierta |
 | `Backspace` | Volver al navegador desde el visor |

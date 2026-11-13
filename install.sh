@@ -21,12 +21,16 @@ Opciones:
   --full,  -f   Compila en modo release e instala todo (predeterminado).
   --copy,  -c   Instala usando el binario release ya compilado.
   --icons, -i   Escala e instala una imagen y actualiza la caché.
+  --clean,
+  --limpiar     Borra los artefactos locales de compilación.
   --help,  -h   Muestra esta ayuda.
 
 Ejemplos:
   ./install.sh
   ./install.sh --full
   ./install.sh --copy
+  ./install.sh --clean
+  ./install.sh --limpiar
   ./install.sh --icons
   ./install.sh --icons ./otro-icono.png
 EOF
@@ -58,6 +62,14 @@ build_release() {
         --package visor_fotos \
         --release \
         --locked
+}
+
+clean_build() {
+    require_command cargo
+    echo "Limpiando los artefactos de compilación de Fotos..."
+    cargo clean \
+        --manifest-path "$PROJECT_DIR/Cargo.toml" \
+        --target-dir "$PROJECT_DIR/target"
 }
 
 install_application() {
@@ -161,6 +173,13 @@ case "$mode" in
         action="icons"
         ICON_SOURCE="${2:-$DEFAULT_ICON_SOURCE}"
         ;;
+    --clean|--limpiar)
+        if (( $# > 1 )); then
+            usage >&2
+            exit 2
+        fi
+        action="clean"
+        ;;
     --help|-h)
         if (( $# > 1 )); then
             usage >&2
@@ -175,6 +194,13 @@ case "$mode" in
         exit 2
         ;;
 esac
+
+if [[ "$action" == "clean" ]]; then
+    clean_build
+    echo
+    echo "Compilación local limpiada. La aplicación instalada no fue modificada."
+    exit 0
+fi
 
 validate_sources
 require_command mktemp

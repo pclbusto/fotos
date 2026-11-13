@@ -16,11 +16,31 @@ impl AppModel {
             ViewerMessage::ZoomRenderReady(key, handle) => {
                 self.zoom_render_ready(key, handle);
             }
-            ViewerMessage::PanBy { x, y } => {
-                return cosmic::iced::widget::scrollable::scroll_by(
-                    crate::viewer::scrollable_id(),
-                    cosmic::iced::widget::scrollable::AbsoluteOffset { x, y },
-                );
+            ViewerMessage::PanStart => {
+                self.viewer.panning = true;
+                self.viewer.pan_last = None;
+            }
+            ViewerMessage::PanMove(position) => {
+                if !self.viewer.panning {
+                    return Task::none();
+                }
+                if let Some(previous) = self.viewer.pan_last.replace(position) {
+                    let x = previous.x - position.x;
+                    let y = previous.y - position.y;
+                    if x != 0.0 || y != 0.0 {
+                        return cosmic::iced::widget::scrollable::scroll_by(
+                            crate::viewer::scrollable_id(),
+                            cosmic::iced::widget::scrollable::AbsoluteOffset { x, y },
+                        );
+                    }
+                }
+            }
+            ViewerMessage::PanEnd => {
+                self.viewer.panning = false;
+                self.viewer.pan_last = None;
+            }
+            ViewerMessage::Scrolled(offset) => {
+                self.viewer.scroll_offset = offset;
             }
             ViewerMessage::ZoomIn => {
                 self.viewer.zoom_mode = ZoomMode::Custom((self.viewer.zoom_factor + 0.05).min(5.0));
@@ -110,6 +130,7 @@ impl AppModel {
                 self.clear_background_selection();
                 self.editor.dirty = false;
                 self.editor.history.clear();
+                self.viewer.view_before_edits = None;
                 self.editor.history_revision = self.editor.history_revision.wrapping_add(1);
                 self.ui.view_mode = ViewMode::Viewer;
                 self.core.nav_bar_set_toggled(false);
@@ -125,7 +146,7 @@ impl AppModel {
                             }
                         }
                     }
-                    sibling_images.sort();
+                    crate::browser::sort::sort_paths(&mut sibling_images, self.browser.sort);
                     if let Some(idx) = sibling_images.iter().position(|p| p == &path) {
                         self.viewer.images = sibling_images;
                         self.viewer.index = idx;
@@ -195,10 +216,15 @@ impl AppModel {
                     self.viewer.image_height = image.height() as f32;
                     self.viewer.image_handle = Some(handle.clone());
                     self.viewer.original_image = Some(image);
-                    self.viewer.zoom_mode = ZoomMode::FitWindow;
+                    let previous_view = self.viewer.view_before_edits.take();
+                    self.viewer.zoom_mode = previous_view
+                        .map(|(mode, _)| mode)
+                        .unwrap_or(ZoomMode::FitWindow);
                     self.editor.crop_start = None;
                     self.editor.crop_end = None;
                     self.editor.cropping = false;
+                    self.editor.multi_crop = false;
+                    self.editor.crop_regions.clear();
                     self.clear_background_selection();
                     self.editor.scale_preview_active = false;
                     self.editor.scale_percent = 100.0;
@@ -214,6 +240,15 @@ impl AppModel {
                         },
                     );
                     self.update_zoom_factor();
+                    if let Some((_, offset)) = previous_view {
+                        return cosmic::iced::widget::scrollable::scroll_to(
+                            crate::viewer::scrollable_id(),
+                            cosmic::iced::widget::scrollable::AbsoluteOffset {
+                                x: Some(offset.x),
+                                y: Some(offset.y),
+                            },
+                        );
+                    }
                 }
             }
             ViewerMessage::ImageReset(Err(err)) => {
@@ -222,16 +257,27 @@ impl AppModel {
             ViewerMessage::SaveCopy => {
                 if let Some(ref img) = self.viewer.original_image {
                     let img_clone = img.clone();
+                    let suggested_name = self
+                        .viewer
+                        .opened_file_path
+                        .as_deref()
+                        .and_then(|path| path.file_stem())
+                        .map(|stem| format!("{}-copia.png", stem.to_string_lossy()))
+                        .unwrap_or_else(|| "imagen.png".to_string());
                     return Task::perform(
                         async move {
-                            let mut dialog = rfd::AsyncFileDialog::new();
+                            let mut dialog =
+                                rfd::AsyncFileDialog::new().set_file_name(&suggested_name);
                             for (name, extensions) in codecs::WRITE_FORMATS {
                                 dialog = dialog.add_filter(*name, extensions);
                             }
                             let file = dialog.save_file().await;
 
                             if let Some(file_handle) = file {
-                                let path = file_handle.path().to_path_buf();
+                                let path = codecs::with_default_extension(
+                                    file_handle.path().to_path_buf(),
+                                    "png",
+                                );
                                 tokio::task::spawn_blocking(move || codecs::save(&img_clone, &path))
                                     .await
                                     .unwrap_or_else(|_| {
@@ -279,6 +325,7 @@ impl AppModel {
             ViewerMessage::FileSaved(Ok(())) => {
                 self.editor.dirty = false;
                 self.editor.history.clear();
+                self.viewer.view_before_edits = None;
                 self.editor.history_revision = self.editor.history_revision.wrapping_add(1);
                 self.ui.notification_message = Some("Imagen guardada".to_string());
                 if self.ui.pending_action.is_some() {

@@ -40,8 +40,11 @@ pub enum Action {
     SaveCopy,
     Quit,
     Undo,
+    Crop,
+    MultiCrop,
     Trash,
     DeletePermanent,
+    Rename,
     GridView,
     ListView,
     ToggleMetadata,
@@ -58,13 +61,16 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 22] = [
         Self::OpenFile,
         Self::SaveCopy,
         Self::Quit,
         Self::Undo,
+        Self::Crop,
+        Self::MultiCrop,
         Self::Trash,
         Self::DeletePermanent,
+        Self::Rename,
         Self::GridView,
         Self::ListView,
         Self::ToggleMetadata,
@@ -87,8 +93,11 @@ impl Action {
             Self::SaveCopy => "save_copy",
             Self::Quit => "quit",
             Self::Undo => "undo",
+            Self::Crop => "crop",
+            Self::MultiCrop => "multi_crop",
             Self::Trash => "trash",
             Self::DeletePermanent => "delete_permanent",
+            Self::Rename => "rename",
             Self::GridView => "grid_view",
             Self::ListView => "list_view",
             Self::ToggleMetadata => "toggle_metadata",
@@ -115,8 +124,11 @@ impl Action {
             Self::SaveCopy => "Guardar una copia",
             Self::Quit => "Salir",
             Self::Undo => "Deshacer",
+            Self::Crop => "Recortar",
+            Self::MultiCrop => "Recorte múltiple",
             Self::Trash => "Enviar a la papelera",
             Self::DeletePermanent => "Eliminar permanentemente",
+            Self::Rename => "Cambiar nombre",
             Self::GridView => "Vista de grilla",
             Self::ListView => "Vista de lista",
             Self::ToggleMetadata => "Información de la foto",
@@ -139,8 +151,11 @@ impl Action {
             Self::SaveCopy => "Guarda la imagen editada en un archivo nuevo",
             Self::Quit => "Cierra Fotos y consulta antes si hay cambios",
             Self::Undo => "Deshace la última transformación",
+            Self::Crop => "Activa el recorte de una región",
+            Self::MultiCrop => "Combina varias regiones en una sola imagen",
             Self::Trash => "Elimina la imagen o carpeta seleccionada",
             Self::DeletePermanent => "Elimina la selección sin pasar por la papelera",
+            Self::Rename => "Cambia el nombre de la imagen seleccionada o abierta",
             Self::GridView => "Muestra el navegador como una grilla de miniaturas",
             Self::ListView => "Muestra el navegador como una lista detallada",
             Self::ToggleMetadata => "Muestra u oculta los metadatos de la imagen",
@@ -160,7 +175,12 @@ impl Action {
     pub fn category(self) -> Category {
         match self {
             Self::OpenFile | Self::SaveCopy | Self::Quit => Category::File,
-            Self::Undo | Self::Trash | Self::DeletePermanent => Category::Edit,
+            Self::Undo
+            | Self::Crop
+            | Self::MultiCrop
+            | Self::Trash
+            | Self::DeletePermanent
+            | Self::Rename => Category::Edit,
             Self::About | Self::Shortcuts => Category::Help,
             _ => Category::View,
         }
@@ -174,8 +194,11 @@ impl Action {
             Self::SaveCopy => vec![ctrl("s")],
             Self::Quit => vec![ctrl("q"), ctrl("w")],
             Self::Undo => vec![ctrl("z")],
+            Self::Crop => vec![ctrl("r")],
+            Self::MultiCrop => vec![Binding::new(true, false, true, "r")],
             Self::Trash => vec![plain("Delete")],
             Self::DeletePermanent => vec![ctrl("Delete")],
+            Self::Rename => vec![plain("F2")],
             Self::GridView => vec![ctrl("1")],
             Self::ListView => vec![ctrl("2")],
             Self::ToggleMetadata => vec![ctrl("Space")],
@@ -556,7 +579,10 @@ mod tests {
             ],
         );
         let parsed = Keymap::parse(&keymap.serialize());
-        assert_eq!(parsed.bindings(Action::ZoomIn), keymap.bindings(Action::ZoomIn));
+        assert_eq!(
+            parsed.bindings(Action::ZoomIn),
+            keymap.bindings(Action::ZoomIn)
+        );
         assert_eq!(parsed.bindings(Action::Quit), keymap.bindings(Action::Quit));
     }
 

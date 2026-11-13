@@ -12,6 +12,7 @@ use crate::viewer::{CachedImage, ImageMetadata, ZoomFilter, ZoomMode, ZoomRender
 #[derive(Debug, Clone)]
 pub enum EditOperation {
     Crop(Point, Point),
+    MultiCrop(Vec<(Point, Point)>),
     RotateClockwise,
     RotateCounterclockwise,
     FlipHorizontal,
@@ -64,11 +65,19 @@ pub(crate) struct PendingDelete {
     pub is_dir: bool,
 }
 
+/// Cambio de nombre en curso: archivo original y nombre que se está escribiendo.
+#[derive(Debug, Clone)]
+pub(crate) struct PendingRename {
+    pub path: PathBuf,
+    pub name: String,
+}
+
 pub struct BrowserState {
     pub current_dir: PathBuf,
     pub items: Vec<BrowserItem>,
     pub focused_index: usize,
     pub layout: BrowserLayout,
+    pub sort: crate::browser::sort::SortOrder,
     pub nav_model: cosmic::widget::nav_bar::Model,
     pub directory_generation: usize,
     pub database: crate::database::ImageDatabase,
@@ -92,10 +101,22 @@ pub struct ViewerState {
     pub opened_file_path: Option<PathBuf>,
     pub metadata: Option<ImageMetadata>,
     pub zoom_render: ZoomRenderState,
+    /// Desplazamiento actual del visor (se actualiza con cada scroll).
+    pub scroll_offset: cosmic::iced::widget::scrollable::AbsoluteOffset,
+    /// Zoom y desplazamiento previos a la primera edición, para restaurarlos
+    /// al descartar los cambios.
+    pub view_before_edits: Option<(ZoomMode, cosmic::iced::widget::scrollable::AbsoluteOffset)>,
+    /// Arrastre con el mouse en curso para desplazar la imagen.
+    pub panning: bool,
+    /// Última posición del cursor durante el arrastre, en coordenadas de ventana
+    /// (no dependen del scroll, así que el delta no se retroalimenta).
+    pub pan_last: Option<cosmic::iced::Point>,
 }
 
 pub struct EditorState {
     pub cropping: bool,
+    pub multi_crop: bool,
+    pub crop_regions: Vec<(Point, Point)>,
     pub crop_start: Option<Point>,
     pub crop_end: Option<Point>,
     pub scale_percent: f32,
@@ -145,4 +166,5 @@ pub struct UiState {
     pub about: About,
     pub(crate) pending_action: Option<PendingAction>,
     pub(crate) pending_delete: Option<PendingDelete>,
+    pub(crate) pending_rename: Option<PendingRename>,
 }

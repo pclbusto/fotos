@@ -58,6 +58,7 @@ impl AppModel {
             self.settings.show_hidden,
             &self.browser.current_dir,
             self.settings.zoom_filter,
+            self.browser.sort,
         );
     }
 
@@ -70,6 +71,8 @@ impl AppModel {
         self.editor.crop_start = None;
         self.editor.crop_end = None;
         self.editor.cropping = false;
+        self.editor.multi_crop = false;
+        self.editor.crop_regions.clear();
         self.clear_background_selection();
         self.editor.scale_preview_active = false;
         self.viewer.zoom_mode = ZoomMode::FitWindow;
@@ -95,7 +98,25 @@ impl AppModel {
             crate::browser::folders::FolderTree::build(&folders, home.as_deref());
     }
 
+    /// Vuelve a aplicar el desplazamiento conocido del visor. Al mostrar u ocultar
+    /// la barra de recorte iced puede reiniciar el scroll al origen; esto lo
+    /// deja donde el usuario lo tenía.
+    pub(crate) fn restore_viewer_scroll(&self) -> Task<cosmic::Action<Message>> {
+        let offset = self.viewer.scroll_offset;
+        cosmic::iced::widget::scrollable::scroll_to(
+            crate::viewer::scrollable_id(),
+            cosmic::iced::widget::scrollable::AbsoluteOffset {
+                x: Some(offset.x),
+                y: Some(offset.y),
+            },
+        )
+    }
+
     pub(crate) fn apply_edit(&mut self, image: DynamicImage, operation: EditOperation) {
+        if self.editor.history.is_empty() {
+            self.viewer.view_before_edits =
+                Some((self.viewer.zoom_mode, self.viewer.scroll_offset));
+        }
         self.editor.history.push(operation);
         self.editor.history_revision = self.editor.history_revision.wrapping_add(1);
         self.set_edited_image(image);
@@ -227,8 +248,12 @@ impl AppModel {
         self.viewer.metadata = None;
         self.editor.crop_start = None;
         self.editor.crop_end = None;
+        self.editor.cropping = false;
+        self.editor.multi_crop = false;
+        self.editor.crop_regions.clear();
         self.clear_background_selection();
         self.editor.history.clear();
+        self.viewer.view_before_edits = None;
         self.editor.history_revision = self.editor.history_revision.wrapping_add(1);
 
         let title = path
@@ -390,6 +415,7 @@ impl cosmic::Application for AppModel {
                 items: Vec::new(),
                 focused_index: 0,
                 layout: preferences.layout,
+                sort: preferences.sort,
                 nav_model,
                 directory_generation: 0,
                 database: crate::database::ImageDatabase::load(),
@@ -411,9 +437,15 @@ impl cosmic::Application for AppModel {
                 opened_file_path: None,
                 metadata: None,
                 zoom_render: Default::default(),
+                scroll_offset: Default::default(),
+                view_before_edits: None,
+                panning: false,
+                pan_last: None,
             },
             editor: EditorState {
                 cropping: false,
+                multi_crop: false,
+                crop_regions: Vec::new(),
                 crop_start: None,
                 crop_end: None,
                 scale_percent: 100.0,
@@ -454,7 +486,9 @@ impl cosmic::Application for AppModel {
                     .name("Fotos")
                     .icon(
                         // Sin tamaño, la búsqueda devuelve el de 24 px y se ve pixelado.
-                        cosmic::widget::icon::from_name(Self::APP_ID).size(256).handle(),
+                        cosmic::widget::icon::from_name(Self::APP_ID)
+                            .size(256)
+                            .handle(),
                     )
                     .version(env!("CARGO_PKG_VERSION"))
                     .author("Pedro")
@@ -465,13 +499,15 @@ impl cosmic::Application for AppModel {
                     .links([("Repositorio", "https://github.com/guten-project/fotos")]),
                 pending_action: None,
                 pending_delete: None,
+                pending_rename: None,
             },
         };
 
         let show_hidden = app.settings.show_hidden;
+        let sort = app.browser.sort;
         app.save_preferences();
         let startup_task = Task::perform(
-            async move { browser_io::load_directory(initial_dir, show_hidden) },
+            async move { browser_io::load_directory(initial_dir, show_hidden, sort) },
             |res| cosmic::Action::App(Message::Browser(BrowserMessage::DirectoryLoaded(res))),
         );
 
@@ -481,7 +517,9 @@ impl cosmic::Application for AppModel {
         }
 
         app.rebuild_folder_tree();
-        app.browser.database.remove_ignored(&app.settings.ignored_folders);
+        app.browser
+            .database
+            .remove_ignored(&app.settings.ignored_folders);
         let scan = crate::browser::folders::scan_task(
             app.browser.database.clone(),
             show_hidden,
@@ -497,7 +535,26 @@ impl cosmic::Application for AppModel {
     }
 
     fn subscription(&self) -> cosmic::iced::Subscription<Self::Message> {
-        cosmic::iced::event::listen_with(|event, status, _window| {
+        // Mientras se arrastra la imagen se escuchan los movimientos del cursor en
+        // coordenadas de ventana: no cambian al desplazar el scroll, a diferencia
+        // de las del canvas, y así el arrastre no pelea con las barras.
+        let pan = if self.viewer.panning {
+            cosmic::iced::event::listen_with(|event, _status, _window| match event {
+                cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::CursorMoved {
+                    position,
+                }) => Some(Message::Viewer(ViewerMessage::PanMove(position))),
+                cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::ButtonReleased(
+                    cosmic::iced::mouse::Button::Left,
+                ))
+                | cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::CursorLeft) => {
+                    Some(Message::Viewer(ViewerMessage::PanEnd))
+                }
+                _ => None,
+            })
+        } else {
+            cosmic::iced::Subscription::none()
+        };
+        let keys = cosmic::iced::event::listen_with(|event, status, _window| {
             if status == cosmic::iced::event::Status::Ignored {
                 match event {
                     // Escape llega por `on_escape`; se descarta aquí para no procesarla dos veces.
@@ -511,14 +568,19 @@ impl cosmic::Application for AppModel {
                             cosmic::iced::keyboard::key::Named::Escape,
                         ) =>
                     {
-                        Some(Message::Ui(UiMessage::KeyPress(key, physical_key, modifiers)))
+                        Some(Message::Ui(UiMessage::KeyPress(
+                            key,
+                            physical_key,
+                            modifiers,
+                        )))
                     }
                     _ => None,
                 }
             } else {
                 None
             }
-        })
+        });
+        cosmic::iced::Subscription::batch([keys, pan])
     }
 
     fn on_window_resize(&mut self, id: cosmic::iced::window::Id, width: f32, height: f32) {
@@ -1036,6 +1098,7 @@ impl AppModel {
                 is_selecting_background: self.editor.selecting_background,
                 crop_start: self.editor.crop_start,
                 crop_end: self.editor.crop_end,
+                crop_regions: self.editor.crop_regions.clone(),
             };
 
             let (viewport_w, viewport_h) = self.viewer_viewport_size();
@@ -1087,6 +1150,9 @@ impl AppModel {
 
             let scrollable_canvas = cosmic::iced::widget::scrollable(image_canvas)
                 .id(crate::viewer::scrollable_id())
+                .on_scroll(|viewport| {
+                    Message::Viewer(ViewerMessage::Scrolled(viewport.absolute_offset()))
+                })
                 .direction(cosmic::iced::widget::scrollable::Direction::Both {
                     vertical: Default::default(),
                     horizontal: Default::default(),
@@ -1094,28 +1160,47 @@ impl AppModel {
                 .width(Length::Fill)
                 .height(Length::Fill);
 
-            if self.editor.cropping {
+            // The scrollable always lives at the same position in the widget tree
+            // (second child of this column) so its scroll offset survives entering
+            // and leaving crop mode; otherwise iced would rebuild its state.
+            let toolbar_slot: Element<_> = if self.editor.cropping {
                 let mut crop_toolbar = cosmic::iced::widget::Row::new()
                     .spacing(8)
                     .align_y(Alignment::Center);
-                let crop_status = match (self.editor.crop_start, self.editor.crop_end) {
-                    (Some(start), Some(end)) => format!(
-                        "{} × {} px",
-                        (end.x - start.x).abs().round() as u32,
-                        (end.y - start.y).abs().round() as u32,
-                    ),
-                    _ => "Recorte".to_string(),
+                let crop_status = if self.editor.multi_crop {
+                    format!(
+                        "Recorte múltiple · {} {}",
+                        self.editor.crop_regions.len(),
+                        if self.editor.crop_regions.len() == 1 {
+                            "selección"
+                        } else {
+                            "selecciones"
+                        }
+                    )
+                } else {
+                    match (self.editor.crop_start, self.editor.crop_end) {
+                        (Some(start), Some(end)) => format!(
+                            "{} × {} px",
+                            (end.x - start.x).abs().round() as u32,
+                            (end.y - start.y).abs().round() as u32,
+                        ),
+                        _ => "Recorte".to_string(),
+                    }
                 };
                 crop_toolbar = crop_toolbar.push(cosmic::widget::text::body(crop_status));
                 crop_toolbar = crop_toolbar.push(
                     cosmic::widget::button::icon(cosmic::widget::icon::from_name(
                         "window-close-symbolic",
                     ))
-                    .on_press(Message::Editor(EditorMessage::ToggleCropMode))
+                    .on_press(Message::Editor(EditorMessage::CancelCrop))
                     .tooltip("Cancelar recorte"),
                 );
 
-                if self.editor.crop_start.is_some() && self.editor.crop_end.is_some() {
+                if (!self.editor.multi_crop
+                    && self.editor.crop_start.is_some()
+                    && self.editor.crop_end.is_some())
+                    || (self.editor.multi_crop && !self.editor.crop_regions.is_empty())
+                {
                     crop_toolbar = crop_toolbar.push(
                         cosmic::widget::button::icon(cosmic::widget::icon::from_name(
                             "emblem-ok-symbolic",
@@ -1125,19 +1210,23 @@ impl AppModel {
                     );
                 }
 
-                let crop_bar_container = cosmic::widget::container(crop_toolbar)
+                cosmic::widget::container(crop_toolbar)
                     .padding(8)
-                    .class(cosmic::theme::Container::Card);
-
-                cosmic::iced::widget::Column::new()
-                    .spacing(8)
-                    .align_x(Alignment::Center)
-                    .push(crop_bar_container)
-                    .push(scrollable_canvas)
+                    .class(cosmic::theme::Container::Card)
                     .into()
             } else {
-                scrollable_canvas.into()
-            }
+                cosmic::iced::widget::Space::new()
+                    .width(Length::Shrink)
+                    .height(Length::Fixed(0.0))
+                    .into()
+            };
+
+            cosmic::iced::widget::Column::new()
+                .spacing(if self.editor.cropping { 8 } else { 0 })
+                .align_x(Alignment::Center)
+                .push(toolbar_slot)
+                .push(scrollable_canvas)
+                .into()
         } else {
             let content_col = cosmic::iced::widget::Column::new()
                 .spacing(spacing.space_m)

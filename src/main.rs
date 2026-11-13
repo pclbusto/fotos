@@ -11,6 +11,7 @@ pub mod input;
 pub mod message;
 pub mod keymap;
 pub mod preferences;
+pub mod rename;
 pub mod shortcuts_panel;
 pub mod state;
 pub mod viewer;
